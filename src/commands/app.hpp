@@ -1,0 +1,31 @@
+#pragma once
+
+#include <filesystem>
+#include <iosfwd>
+#include <memory>
+#include <string_view>
+
+namespace CLI {
+class App;
+}
+
+namespace wt {
+
+inline constexpr std::string_view kVersion = WT_VERSION;
+
+// Everything a command needs from its environment. Commands must use this
+// rather than process-global state (std::filesystem::current_path(),
+// std::cout, ...) so tests can run them in-process against an isolated sandbox.
+struct Context {
+    std::filesystem::path cwd;
+    std::ostream& out;
+    std::ostream& err;
+};
+
+// Builds the top-level `wt` command-line definition.
+std::unique_ptr<CLI::App> make_app();
+
+// Parses argv and runs the requested command. Returns the process exit code.
+int run(int argc, const char* const* argv, const Context& ctx);
+
+}  // namespace wt
