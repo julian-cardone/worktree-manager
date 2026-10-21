@@ -143,7 +143,7 @@ They can't start with `-` or `.`, start or end with `/`, or contain `//` or `..`
 If `origin/<task>` exists, `wt` warns but still creates a new local branch from the integration branch, without tracking it.
 
 **If Git fails partway**, for example because a `post-checkout` hook exits non-zero after the worktree was created, `wt new` exits 1, shows Git's output, and lists the branch or directory left behind.
-It never removes them itself.
+It never removes them itself, but says how: `wt remove <task>` for the worktree, then `git branch -d <task>` for the branch.
 
 ### `wt status <task>`
 

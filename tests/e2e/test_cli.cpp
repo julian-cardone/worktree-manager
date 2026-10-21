@@ -817,12 +817,22 @@ TEST_CASE("wt new reports what git leaves behind and removes nothing") {
         StartsWith("wt: error: git worktree add failed with exit code 3"));
     CHECK_THAT(r.err, ContainsSubstring("  hook broke\n"));
     CHECK_THAT(r.err, ContainsSubstring("  branch feature\n"));
-    CHECK_THAT(r.err, ContainsSubstring("nothing was removed"));
+    CHECK_THAT(r.err,
+               ContainsSubstring(
+                   "nothing was removed; if you don't need them, remove the "
+                   "worktree with `wt remove feature`, then delete the branch "
+                   "with `git branch -d feature`\n"));
 
     // Both are still there for the user to inspect.
     git(box, repo, {"show-ref", "--verify", "--quiet", "refs/heads/feature"});
     auto list = run_wt(box, repo, {"list"});
     CHECK_THAT(list.out, ContainsSubstring("/feature\n"));
+
+    // The suggested cleanup works.
+    auto removed = run_wt(box, repo, {"remove", "feature"});
+    CHECK(removed.code == 0);
+    git(box, repo, {"branch", "-d", "feature"});
+    CHECK(git_output(box, repo, {"branch", "--list", "feature"}).empty());
 }
 
 TEST_CASE("wt new works with a bare repository") {

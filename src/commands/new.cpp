@@ -94,8 +94,19 @@ void report_failure(const Context& ctx, const git::Result& result,
     if (path_left) {
         ctx.err << "  worktree " << ui::printable(target.string()) << '\n';
     }
-    ctx.err << "wt: nothing was removed; if you don't need them, remove them "
-               "with `git worktree remove` and `git branch -d`\n";
+    // The worktree goes first: Git won't delete a branch that is checked out.
+    ctx.err << "wt: nothing was removed; if you don't need "
+            << (branch_left && path_left ? "them" : "it") << ", ";
+    if (path_left) {
+        ctx.err << "remove the worktree with `wt remove "
+                << ui::printable(branch) << '`';
+    }
+    if (branch_left) {
+        ctx.err << (path_left ? ", then " : "")
+                << "delete the branch with `git branch -d "
+                << ui::printable(branch) << '`';
+    }
+    ctx.err << '\n';
 }
 
 }  // namespace
