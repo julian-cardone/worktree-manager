@@ -1103,3 +1103,418 @@ TEST_CASE("wt status requires a task name") {
     CHECK(r.code != 0);
     CHECK_THAT(r.err, ContainsSubstring("task"));
 }
+
+// --- wt remove ---
+
+namespace {
+
+// Reports whether Git still has a worktree registered at `path`.
+bool registered(const Sandbox& box, const fs::path& repo,
+                const fs::path& path) {
+    const auto list =
+        lines(git_output(box, repo, {"worktree", "list", "--porcelain"}));
+    return std::ranges::find(list, "worktree " + path.string()) != list.end();
+}
+
+// Checks that a refused `wt remove` left the worktree, its files, and its
+// branch exactly as they were.
+void check_untouched(const Sandbox& box, const fs::path& repo,
+                     const fs::path& path, const std::string& branch) {
+    CHECK(registered(box, repo, path));
+    CHECK(fs::is_regular_file(path / "README"));
+    CHECK(git_output(box, path, {"branch", "--show-current"}) == branch);
+}
+
+}  // namespace
+
+TEST_CASE("wt remove removes a clean worktree and keeps its branch") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "claude/fix-login");
+    commit_file(box, path, "a.txt", "a\n");
+    const std::string head = git_output(box, path, {"rev-parse", "HEAD"});
+
+    auto r = run_wt(box, repo, {"remove", "claude/fix-login"});
+    CHECK(r.code == 0);
+    CHECK(r.err.empty());
+    CHECK(r.out == "Removed worktree " + path.string() +
+                       "\n"
+                       "Kept branch claude/fix-login\n");
+    CHECK_FALSE(fs::exists(path));
+    CHECK_FALSE(registered(box, repo, path));
+    CHECK(git_output(box, repo, {"rev-parse", "refs/heads/claude/fix-login"}) ==
+          head);
+    // The container stays, so the next `wt new` reuses it.
+    CHECK(fs::is_regular_file(path.parent_path() / ".wt-managed"));
+
+    // The task can be started again from scratch once the branch is gone.
+    git(box, repo, {"branch", "-D", "claude/fix-login"});
+    CHECK(wt_new(box, repo, "claude/fix-login") == path);
+}
+
+TEST_CASE("wt remove refuses a worktree with uncommitted changes") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature-x");
+    commit_file(box, path, "a.txt", "a\n");
+    write_file(path / "README", "changed\n");
+    write_file(path / "a.txt", "changed\n");
+    write_file(path / "new.txt", "new\n");
+
+    auto r = run_wt(box, repo, {"remove", "feature-x"});
+    CHECK(r.code == 1);
+    CHECK(r.out.empty());
+    CHECK(r.err ==
+          "wt: error: cannot remove feature-x\n"
+          "\n"
+          "  2 modified files\n"
+          "  1 untracked file\n"
+          "\n"
+          "Commit, stash, or remove these changes first.\n");
+    check_untouched(box, repo, path, "feature-x");
+    CHECK(read_file(path / "a.txt") == "changed\n");
+    CHECK(read_file(path / "new.txt") == "new\n");
+}
+
+TEST_CASE("wt remove refuses each kind of uncommitted change") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature");
+    std::string expected;
+
+    SECTION("staged") {
+        write_file(path / "staged.txt", "staged\n");
+        git(box, path, {"add", "staged.txt"});
+        // Staged and then deleted from disk: only the index has it.
+        fs::remove(path / "staged.txt");
+        expected = "  1 staged file\n  1 modified file\n";
+    }
+    SECTION("unstaged deletion") {
+        fs::remove(path / "README");
+        fs::create_directories(path / "dir");
+        write_file(path / "dir" / "README", "x\n");
+        expected = "  1 modified file\n  1 untracked file\n";
+    }
+    SECTION("untracked directory") {
+        fs::create_directories(path / "notes" / "deep");
+        write_file(path / "notes" / "deep" / "idea.md", "idea\n");
+        expected = "  1 untracked file\n";
+    }
+    SECTION("untracked file hidden by Git config") {
+        git(box, repo, {"config", "status.showUntrackedFiles", "no"});
+        write_file(path / "new.txt", "new\n");
+        expected = "  1 untracked file\n";
+    }
+    SECTION("merge conflict") {
+        commit_file(box, path, "README", "feature\n");
+        commit_file(box, repo, "README", "main\n");
+        REQUIRE(run_in(box, path, {find_on_path("git"), "merge", "-q", "main"})
+                    .code != 0);
+        expected = "  1 conflicted file\n";
+    }
+
+    auto r = run_wt(box, repo, {"remove", "feature"});
+    CHECK(r.code == 1);
+    CHECK(r.out.empty());
+    CHECK(r.err == "wt: error: cannot remove feature\n\n" + expected +
+                       "\nCommit, stash, or remove these changes first.\n");
+    CHECK(registered(box, repo, path));
+    CHECK(fs::is_directory(path));
+}
+
+TEST_CASE("wt remove refuses ignored files unless told to delete them") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    write_file(repo / ".gitignore", "*.env\nbuild/\n");
+    git(box, repo, {"add", ".gitignore"});
+    git(box, repo, {"commit", "-q", "-m", "ignore"});
+    const fs::path path = wt_new(box, repo, "feature");
+    write_file(path / "secret.env", "token\n");
+    fs::create_directories(path / "build" / "obj");
+    write_file(path / "build" / "obj" / "a.o", "o\n");
+
+    auto r = run_wt(box, repo, {"remove", "feature"});
+    CHECK(r.code == 1);
+    CHECK(r.out.empty());
+    CHECK(r.err ==
+          "wt: error: cannot remove feature\n"
+          "\n"
+          "  2 ignored files\n"
+          "\n"
+          "Ignored files are deleted with the worktree; move any you need, "
+          "then rerun with --delete-ignored.\n");
+    CHECK(read_file(path / "secret.env") == "token\n");
+    CHECK(registered(box, repo, path));
+
+    SECTION("changes are reported alongside ignored files") {
+        write_file(path / "new.txt", "new\n");
+        r = run_wt(box, repo, {"remove", "feature"});
+        CHECK(r.code == 1);
+        CHECK(r.err ==
+              "wt: error: cannot remove feature\n"
+              "\n"
+              "  1 untracked file\n"
+              "  2 ignored files\n"
+              "\n"
+              "Commit, stash, or remove these changes first.\n"
+              "Ignored files are deleted with the worktree; move any you "
+              "need, then rerun with --delete-ignored.\n");
+
+        // --delete-ignored never lets uncommitted changes through.
+        r = run_wt(box, repo, {"remove", "--delete-ignored", "feature"});
+        CHECK(r.code == 1);
+        CHECK(r.err ==
+              "wt: error: cannot remove feature\n"
+              "\n"
+              "  1 untracked file\n"
+              "\n"
+              "Commit, stash, or remove these changes first.\n");
+        CHECK(read_file(path / "new.txt") == "new\n");
+        CHECK(read_file(path / "secret.env") == "token\n");
+    }
+    SECTION("--delete-ignored removes them") {
+        r = run_wt(box, repo, {"remove", "feature", "--delete-ignored"});
+        CHECK(r.code == 0);
+        CHECK(r.err.empty());
+        CHECK_FALSE(fs::exists(path));
+        CHECK_FALSE(registered(box, repo, path));
+    }
+}
+
+TEST_CASE("wt remove cleans up a worktree whose directory is gone") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "gone");
+    commit_file(box, path, "a.txt", "a\n");
+
+    SECTION("directory deleted") {
+        fs::remove_all(path);
+    }
+    SECTION("whole container deleted") {
+        fs::remove_all(path.parent_path());
+    }
+
+    auto r = run_wt(box, repo, {"remove", "gone"});
+    CHECK(r.code == 0);
+    CHECK(r.err.empty());
+    CHECK(r.out == "Worktree " + path.string() +
+                       " was already gone; removed Git's record of it\n"
+                       "Kept branch gone\n");
+    CHECK_FALSE(registered(box, repo, path));
+    CHECK(git_output(box, repo, {"log", "-1", "--format=%s", "gone"}) ==
+          "change a.txt");
+}
+
+TEST_CASE("wt remove refuses the main worktree") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path linked = wt_new(box, repo, "feature");
+
+    for (const fs::path& from : {repo, linked}) {
+        INFO("running from " << from);
+        auto r = run_wt(box, from, {"remove", "main"});
+        CHECK(r.code == 1);
+        CHECK(r.out.empty());
+        CHECK(r.err ==
+              "wt: error: 'main' is checked out in the main worktree, which "
+              "wt never removes\n");
+    }
+    CHECK(fs::is_regular_file(repo / "README"));
+}
+
+TEST_CASE("wt remove refuses a worktree wt didn't create") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path other = box.work() / "elsewhere";
+    git(box, repo, {"worktree", "add", "-q", "-b", "other", other.string()});
+    // Even inside the container, only direct children are wt's.
+    const fs::path container = wt_new(box, repo, "feature").parent_path();
+    const fs::path nested = container / "deeper" / "nested";
+    git(box, repo, {"worktree", "add", "-q", "-b", "nested", nested.string()});
+
+    for (const auto& [task, path] :
+         {std::pair{"other", other}, std::pair{"nested", nested}}) {
+        INFO("task " << task);
+        auto r = run_wt(box, repo, {"remove", task});
+        CHECK(r.code == 1);
+        CHECK(r.out.empty());
+        CHECK(r.err == "wt: error: the worktree for '" + std::string(task) +
+                           "' at " + path.string() +
+                           " wasn't created by wt, so wt won't remove it\n");
+        check_untouched(box, repo, path, task);
+    }
+}
+
+TEST_CASE("wt remove refuses a container it can't prove it owns") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature");
+    const fs::path marker = path.parent_path() / ".wt-managed";
+
+    SECTION("marker missing") {
+        fs::remove(marker);
+    }
+    SECTION("marker for another repository") {
+        write_file(marker, "wt-managed 1\nrepository /elsewhere/.git\n");
+    }
+
+    auto r = run_wt(box, repo, {"remove", "feature"});
+    CHECK(r.code == 1);
+    CHECK(r.out.empty());
+    CHECK_THAT(r.err,
+               StartsWith("wt: error: " + path.parent_path().string() +
+                          " exists but wt can't confirm it manages it ("));
+    check_untouched(box, repo, path, "feature");
+}
+
+TEST_CASE("wt remove refuses the worktree it's run from") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature");
+    fs::create_directories(path / "src");
+
+    for (const fs::path& from : {path, path / "src"}) {
+        INFO("running from " << from);
+        auto r = run_wt(box, from, {"remove", "feature"});
+        CHECK(r.code == 1);
+        CHECK(r.out.empty());
+        CHECK(r.err ==
+              "wt: error: you are inside the worktree for 'feature'; run wt "
+              "remove from somewhere else\n");
+        check_untouched(box, repo, path, "feature");
+    }
+
+    // Any other worktree of the repository works.
+    const fs::path other = wt_new(box, repo, "other");
+    auto r = run_wt(box, other, {"remove", "feature"});
+    CHECK(r.code == 0);
+    CHECK_FALSE(fs::exists(path));
+}
+
+TEST_CASE("wt remove refuses a locked worktree") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature");
+    git(box, repo,
+        {"worktree", "lock", "--reason", "on a USB drive", path.string()});
+
+    auto r = run_wt(box, repo, {"remove", "feature"});
+    CHECK(r.code == 1);
+    CHECK(r.out.empty());
+    CHECK(r.err ==
+          "wt: error: the worktree for 'feature' is locked; if it's no longer "
+          "needed, unlock it with `git worktree unlock " +
+              path.string() + "`\n");
+    check_untouched(box, repo, path, "feature");
+}
+
+TEST_CASE("wt remove refuses a worktree path that isn't a real directory") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature");
+    // Git itself would delete the files a symlink here points to.
+    const fs::path moved = box.work() / "moved";
+    fs::rename(path, moved);
+
+    SECTION("symlink") {
+        fs::create_directory_symlink(moved, path);
+    }
+    SECTION("file") {
+        write_file(path, "keep me");
+    }
+
+    auto r = run_wt(box, repo, {"remove", "feature"});
+    CHECK(r.code == 1);
+    CHECK(r.out.empty());
+    CHECK(r.err == "wt: error: " + path.string() +
+                       " is not a directory, so wt won't remove it\n");
+    CHECK(registered(box, repo, path));
+    CHECK(read_file(moved / "README") == "hello\n");
+    if (fs::is_regular_file(fs::symlink_status(path))) {
+        CHECK(read_file(path) == "keep me");
+    }
+}
+
+TEST_CASE("wt remove refuses a worktree whose status can't be read") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "broken");
+    fs::remove(path / ".git");
+
+    auto r = run_wt(box, repo, {"remove", "broken"});
+    CHECK(r.code == 1);
+    CHECK(r.out.empty());
+    CHECK(r.err == "wt: error: cannot read the status of " + path.string() +
+                       ": its .git file is missing; not removing it\n");
+    CHECK(fs::is_regular_file(path / "README"));
+    CHECK(registered(box, repo, path));
+}
+
+TEST_CASE("wt remove reports Git's failure and what is left") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature");
+    fs::create_directories(path / "locked");
+    write_file(path / "locked" / "data", "data\n");
+    git(box, path, {"add", "locked/data"});
+    git(box, path, {"commit", "-q", "-m", "data"});
+    // Git can't delete files inside a directory it can't write to.
+    fs::permissions(path / "locked", fs::perms::owner_write,
+                    fs::perm_options::remove);
+
+    auto r = run_wt(box, repo, {"remove", "feature"});
+    fs::permissions(path / "locked", fs::perms::owner_write,
+                    fs::perm_options::add);
+    CHECK(r.code == 1);
+    CHECK(r.out.empty());
+    CHECK_THAT(r.err, StartsWith("wt: error: git worktree remove failed with "
+                                 "exit code "));
+    CHECK_THAT(r.err,
+               ContainsSubstring("wt: " + path.string() + " is still there\n"));
+    CHECK(read_file(path / "locked" / "data") == "data\n");
+}
+
+TEST_CASE("wt remove fails for a task without a worktree") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    git(box, repo, {"branch", "parked"});
+
+    auto r = run_wt(box, repo, {"remove", "nope"});
+    CHECK(r.code == 1);
+    CHECK(r.out.empty());
+    CHECK(r.err ==
+          "wt: error: no worktree for task 'nope'; `wt list` shows them all\n");
+
+    r = run_wt(box, repo, {"remove", "parked"});
+    CHECK(r.code == 1);
+    CHECK(r.err ==
+          "wt: error: branch 'parked' isn't checked out in any worktree\n");
+    CHECK(git_output(box, repo, {"branch", "--list", "parked"}) == "  parked");
+}
+
+TEST_CASE("wt remove handles spaces in the repository path") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "my repo");
+    const fs::path path = wt_new(box, repo, "feature");
+
+    auto r = run_wt(box, repo, {"remove", "feature"});
+    CHECK(r.code == 0);
+    CHECK_FALSE(fs::exists(path));
+    CHECK_FALSE(registered(box, repo, path));
+}
+
+TEST_CASE("wt remove outside a repository fails with a clear error") {
+    Sandbox box;
+    auto r = run_wt(box, box.work(), {"remove", "feature"});
+    CHECK(r.code == 1);
+    CHECK(r.out.empty());
+    CHECK_THAT(r.err, StartsWith("wt: error: not a git repository"));
+}
+
+TEST_CASE("wt remove requires a task name") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    auto r = run_wt(box, repo, {"remove"});
+    CHECK(r.code != 0);
+    CHECK_THAT(r.err, ContainsSubstring("task"));
+}

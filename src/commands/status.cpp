@@ -1,5 +1,6 @@
 #include "commands/status.hpp"
 
+#include "commands/task_worktree.hpp"
 #include "git/git.hpp"
 #include "git/repo.hpp"
 #include "git/worktree.hpp"
@@ -7,43 +8,12 @@
 
 #include <optional>
 #include <ostream>
-#include <stdexcept>
 #include <string>
 #include <vector>
 
 namespace wt {
 
 namespace {
-
-// Tasks are branch names, so the task's worktree is the one with that branch
-// checked out.
-const git::Worktree& find_task_worktree(
-    const Context& ctx, const std::vector<git::Worktree>& worktrees,
-    const std::string& task) {
-    const git::Worktree* found = nullptr;
-    for (const auto& worktree : worktrees) {
-        if (worktree.branch != task) {
-            continue;
-        }
-        // Only possible if someone forced Git to check the branch out twice.
-        if (found != nullptr) {
-            throw std::runtime_error("branch '" + task +
-                                     "' is checked out in more than one "
-                                     "worktree; `wt list` shows them");
-        }
-        found = &worktree;
-    }
-    if (found != nullptr) {
-        return *found;
-    }
-    if (git::is_valid_branch_name(ctx.cwd, task) &&
-        git::ref_exists(ctx.cwd, "refs/heads/" + task)) {
-        throw std::runtime_error("branch '" + task +
-                                 "' isn't checked out in any worktree");
-    }
-    throw std::runtime_error("no worktree for task '" + task +
-                             "'; `wt list` shows them all");
-}
 
 // The integration branch, or nothing (with a warning) if there isn't one.
 // Not having one only costs the ahead/behind counts, so it isn't fatal.
@@ -61,7 +31,8 @@ std::optional<std::string> try_integration_branch(const Context& ctx) {
 
 int status_command(const Context& ctx, const std::string& task) {
     const auto worktrees = git::list_worktrees(ctx.cwd);
-    const git::Worktree& worktree = find_task_worktree(ctx, worktrees, task);
+    const git::Worktree& worktree =
+        find_task_worktree(ctx.cwd, worktrees, task);
     // Git reports an all-zero HEAD for a branch with no commits yet.
     const bool unborn =
         worktree.head.find_first_not_of('0') == std::string::npos;

@@ -8,7 +8,7 @@ Read this file at the start of every prompt. Do not rely on memory of previous i
 
 ## 1. General Principles
 
-- Prioritize correctness, safety, clarity, and maintainability.
+- Prioritize correctness, safety, clarity, scalability, and maintainability.
 - Read the current source code directly. Do not rely on stale builds, generated artifacts, or memory.
 - Follow established C++ best practices and maintain a clean, consistent architecture.
 - Prefer simple solutions over unnecessary complexity.
@@ -19,7 +19,7 @@ Read this file at the start of every prompt. Do not rely on memory of previous i
 As we review and modify the codebase, watch for:
 
 - **Bugs & Security:** Identify and surface bugs, security vulnerabilities, unsafe behavior, and meaningful risks.
-- **Code & Architecture:** Identify improvements to code quality, maintainability, and architecture.
+- **Code & Architecture:** Identify improvements to code quality, maintainability, scalability, and architecture.
 - **TODOs:** Identify relevant deferred work, bring it to my attention first, and only then record it in `project-notes/TODO.md`. Do not leave TODO, FIXME, or similar deferred-work comments in source code.
 - **Dead Code:** Remove unused or obsolete code.
 - **Shared Code:** Extract common functionality when it genuinely reduces duplication or improves maintainability.
@@ -41,10 +41,9 @@ Implement straightforward, clearly beneficial improvements where appropriate. Su
 
 ## 4. Dogfooding `wt`
 
-All development on this repository should exercise `wt` as the intended workflow.
+All development on this repository should exercise `wt` as the intended workflow. Use `wt` exclusively.
 
 - All new feature, fix, refactor, review, or other development work must begin in a new worktree created through `wt`. Do not perform new development work directly in the primary checkout.
-- For all supported worktree and branch lifecycle operations, use `wt` exclusively. Do not use equivalent raw Git commands when `wt` provides that capability.
 - If `wt` is broken, incomplete, unsafe, or unable to perform the required operation, stop and surface the issue before continuing. Do not work around the limitation with raw Git.
 - If using `wt` introduces meaningful friction, confusing behavior, failures, safety concerns, or other workflow issues, record them in `project-notes/wt-usage.md`.
 - Record significant product, architecture, safety, reliability, performance, or usability findings in `project-notes/findings.md`.

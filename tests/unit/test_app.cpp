@@ -105,3 +105,15 @@ TEST_CASE("status --help describes the task argument") {
     CHECK(r.code == 0);
     CHECK_THAT(r.out, ContainsSubstring("task"));
 }
+
+TEST_CASE("help lists the remove command") {
+    auto r = run_wt({"--help"});
+    CHECK_THAT(r.out, ContainsSubstring("remove"));
+}
+
+TEST_CASE("remove --help describes the task and --delete-ignored") {
+    auto r = run_wt({"remove", "--help"});
+    CHECK(r.code == 0);
+    CHECK_THAT(r.out, ContainsSubstring("task"));
+    CHECK_THAT(r.out, ContainsSubstring("--delete-ignored"));
+}

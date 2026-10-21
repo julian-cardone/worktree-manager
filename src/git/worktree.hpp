@@ -21,14 +21,16 @@ struct Worktree {
 enum class Status { clean, dirty, bare, missing, unknown };
 
 // Uncommitted changes, counted the way `git status` lists them: a file with
-// both staged and unstaged changes counts in both, and an untracked directory
-// counts once.
+// both staged and unstaged changes counts in both, and an untracked or ignored
+// directory counts once.
 struct Changes {
     std::size_t staged = 0;
     std::size_t modified = 0;  // unstaged changes to tracked files
     std::size_t untracked = 0;
     std::size_t conflicts = 0;
+    std::size_t ignored = 0;  // only counted when asked for
 
+    // Ignored files aren't changes, so they don't count here.
     bool empty() const {
         return staged == 0 && modified == 0 && untracked == 0 && conflicts == 0;
     }
@@ -55,9 +57,15 @@ std::vector<Worktree> list_worktrees(const std::filesystem::path& dir);
 std::optional<std::size_t> find_worktree_containing(
     const std::vector<Worktree>& worktrees, const std::filesystem::path& dir);
 
+// Reports whether `dir` is the worktree's directory or lies inside it.
+bool worktree_contains(const Worktree& worktree,
+                       const std::filesystem::path& dir);
+
 // Reports whether the worktree has uncommitted changes, including untracked
-// files, and counts them. Never modifies the worktree or its index.
-StatusResult worktree_status(const Worktree& worktree);
+// files, and counts them; with `count_ignored`, also counts ignored files.
+// Never modifies the worktree or its index.
+StatusResult worktree_status(const Worktree& worktree,
+                             bool count_ignored = false);
 
 // How wt shows a status, e.g. "dirty"; "-" for a bare repository.
 std::string_view status_label(Status status);

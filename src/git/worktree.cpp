@@ -103,8 +103,10 @@ Changes parse_status(std::string_view porcelain) {
             case '?':
                 ++changes.untracked;
                 break;
+            case '!':  // only listed with --ignored
+                ++changes.ignored;
+                break;
             case '#':  // headers, e.g. from --branch
-            case '!':  // ignored files, from --ignored
                 break;
             default:
                 throw Error("unexpected output from git status");
@@ -125,22 +127,32 @@ std::vector<Worktree> list_worktrees(const fs::path& dir) {
     return parse_worktree_list(r.out);
 }
 
-std::optional<std::size_t> find_worktree_containing(
-    const std::vector<Worktree>& worktrees, const fs::path& dir) {
-    // Git reports symlink-free paths, so resolve `dir` the same way.
+namespace {
+
+// Git reports symlink-free paths, so resolve `dir` the same way.
+fs::path resolve(const fs::path& dir) {
     std::error_code ec;
     fs::path resolved = fs::weakly_canonical(dir, ec);
-    if (ec) {
-        resolved = dir.lexically_normal();
-    }
+    return ec ? dir.lexically_normal() : resolved;
+}
 
+// Reports whether `resolved` is `root` or lies inside it.
+bool within(const fs::path& root, const fs::path& resolved) {
+    return std::mismatch(root.begin(), root.end(), resolved.begin(),
+                         resolved.end())
+               .first == root.end();
+}
+
+}  // namespace
+
+std::optional<std::size_t> find_worktree_containing(
+    const std::vector<Worktree>& worktrees, const fs::path& dir) {
+    const fs::path resolved = resolve(dir);
     std::optional<std::size_t> best;
     std::size_t best_depth = 0;
     for (std::size_t i = 0; i < worktrees.size(); ++i) {
         const fs::path& root = worktrees[i].path;
-        const auto [root_it, dir_it] = std::mismatch(
-            root.begin(), root.end(), resolved.begin(), resolved.end());
-        if (root_it != root.end()) {
+        if (!within(root, resolved)) {
             continue;
         }
         const auto depth =
@@ -153,7 +165,11 @@ std::optional<std::size_t> find_worktree_containing(
     return best;
 }
 
-StatusResult worktree_status(const Worktree& worktree) {
+bool worktree_contains(const Worktree& worktree, const fs::path& dir) {
+    return within(worktree.path, resolve(dir));
+}
+
+StatusResult worktree_status(const Worktree& worktree, bool count_ignored) {
     if (worktree.bare) {
         return {Status::bare, {}, {}};
     }
@@ -176,9 +192,13 @@ StatusResult worktree_status(const Worktree& worktree) {
     // collide with another git process (e.g. an agent) using the worktree.
     // --untracked-files=normal overrides status.showUntrackedFiles=no, which
     // would otherwise hide untracked files and report the worktree as clean.
-    const Result r =
-        run(worktree.path, {"--no-optional-locks", "status", "--porcelain=v2",
-                            "-z", "--untracked-files=normal"});
+    std::vector<std::string> args = {"--no-optional-locks", "status",
+                                     "--porcelain=v2", "-z",
+                                     "--untracked-files=normal"};
+    if (count_ignored) {
+        args.push_back("--ignored");
+    }
+    const Result r = run(worktree.path, args);
     if (r.exit_code != 0) {
         return {Status::unknown, error_message(r.err), {}};
     }

@@ -3,7 +3,7 @@
 `wt` is a small C++ CLI that takes the friction out of managing Git worktrees when you (and agents like Claude or Codex) are working on several things at once.
 
 > Status: early development.
-> `wt list`, `wt new`, and `wt status` work; switching and removing worktrees are not implemented yet.
+> `wt list`, `wt new`, `wt status`, and `wt remove` work; switching worktrees and deleting branches are not implemented yet.
 
 ## Requirements
 
@@ -61,6 +61,7 @@ git ls-files '*.cpp' '*.hpp' | xargs clang-format -i
 | `wt list` | List every worktree of the current repository with its branch, status, and path. |
 | `wt new <task>` | Create branch `<task>` from the integration branch in a new worktree, and print its path. |
 | `wt status <task>` | Summarize the task's worktree: HEAD, uncommitted changes, and commits ahead of or behind the integration branch. |
+| `wt remove <task>` | Remove the task's worktree if nothing uncommitted would be lost. The branch is kept. |
 
 The version is set by `project(wt VERSION ...)` in `CMakeLists.txt`.
 
@@ -179,6 +180,56 @@ If there is no integration branch, `wt status` warns and leaves them out.
 If the worktree's directory is gone, the status is `missing` and the change counts are left out; ahead and behind still show, since they only depend on the branch.
 If the status can't be read, `wt status` prints what it can and exits 1.
 It also exits 1 if no worktree has the branch checked out.
+
+### `wt remove <task>`
+
+```
+$ wt remove feature-x
+Removed worktree ~/Dev/.worktree-manager.wt-a13f92c4/feature-x
+Kept branch feature-x
+```
+
+Removes the worktree that has branch `<task>` checked out, using `git worktree remove`.
+The branch and its commits are always kept; delete the branch yourself once it's merged.
+It works from the main checkout or any other worktree of the repository.
+
+**It refuses, and changes nothing, if the worktree has:**
+
+- staged changes;
+- unstaged changes to tracked files;
+- untracked files (even if `status.showUntrackedFiles` is `no`);
+- unresolved merge conflicts;
+- ignored files, unless `--delete-ignored` is given.
+
+```
+$ wt remove feature-x
+wt: error: cannot remove feature-x
+
+  2 modified files
+  1 untracked file
+
+Commit, stash, or remove these changes first.
+```
+
+Counts follow `git status`: an untracked or ignored directory counts once.
+Git itself deletes ignored files (such as `.env` files or build output) with the worktree, so `wt` treats them as something to lose too.
+`--delete-ignored` lets them be deleted, but never overrides any other check.
+`wt` never passes `--force` to Git, so Git's own check for modified and untracked files still applies.
+
+**It also refuses:**
+
+- the main worktree;
+- a worktree `wt` didn't create, i.e. one that isn't directly inside this repository's verified container (see `wt new`);
+- the worktree you're running it from, including any directory inside it;
+- a locked worktree (`git worktree unlock` it first);
+- a worktree path that is a symlink or a file rather than a directory, since Git would follow a symlink and delete what it points to;
+- a worktree whose status can't be read.
+
+**If the worktree's directory is already gone**, `wt remove` only removes Git's record of it, and says so.
+This also works if the whole container was deleted.
+Other stale worktrees are left alone, unlike `git worktree prune`.
+
+**If Git fails**, `wt remove` exits 1, shows Git's output, and says whether the worktree's directory is still there.
 
 ## Project layout
 

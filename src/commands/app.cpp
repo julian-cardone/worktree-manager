@@ -2,6 +2,7 @@
 
 #include "commands/list.hpp"
 #include "commands/new.hpp"
+#include "commands/remove.hpp"
 #include "commands/status.hpp"
 #include "ui/format.hpp"
 
@@ -36,6 +37,15 @@ std::unique_ptr<CLI::App> make_app() {
                         "integration branch")
         ->add_option("task", "Task name, i.e. the worktree's branch")
         ->required();
+    auto* remove = app->add_subcommand(
+        "remove",
+        "Remove a task's worktree if it has no uncommitted changes; the "
+        "branch is kept");
+    remove->add_option("task", "Task name, i.e. the worktree's branch")
+        ->required();
+    remove->add_flag("--delete-ignored",
+                     "Remove the worktree even if it holds ignored files, "
+                     "deleting them");
     return app;
 }
 
@@ -55,6 +65,11 @@ int run(int argc, const char* const* argv, const Context& ctx) {
         }
         if (auto* sub = app->get_subcommand("new"); sub->parsed()) {
             return new_command(ctx, sub->get_option("task")->as<std::string>());
+        }
+        if (auto* sub = app->get_subcommand("remove"); sub->parsed()) {
+            return remove_command(
+                ctx, sub->get_option("task")->as<std::string>(),
+                sub->get_option("--delete-ignored")->as<bool>());
         }
         if (auto* sub = app->get_subcommand("status"); sub->parsed()) {
             return status_command(ctx,

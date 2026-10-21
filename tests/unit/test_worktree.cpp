@@ -122,6 +122,17 @@ TEST_CASE("find_worktree_containing picks the deepest enclosing worktree") {
     CHECK_FALSE(find_worktree_containing({}, "/code/repo").has_value());
 }
 
+TEST_CASE("worktree_contains matches the worktree and paths inside it") {
+    using wt::git::worktree_contains;
+    const wt::git::Worktree worktree{.path = "/code/.repo.wt-1/feature"};
+    CHECK(worktree_contains(worktree, "/code/.repo.wt-1/feature"));
+    CHECK(worktree_contains(worktree, "/code/.repo.wt-1/feature/src/x"));
+    CHECK(worktree_contains(worktree, "/code/.repo.wt-1/feature/src/.."));
+    CHECK_FALSE(worktree_contains(worktree, "/code/.repo.wt-1"));
+    CHECK_FALSE(worktree_contains(worktree, "/code/.repo.wt-1/feature-2"));
+    CHECK_FALSE(worktree_contains(worktree, "/code/.repo.wt-1/feature/../b"));
+}
+
 TEST_CASE("parse_status counts nothing for a clean worktree") {
     CHECK(wt::git::parse_status("").empty());
 }
@@ -159,9 +170,11 @@ TEST_CASE("parse_status counts conflicts and untracked files") {
     CHECK(changes.staged == 0);
 }
 
-TEST_CASE("parse_status ignores headers and ignored files") {
+TEST_CASE("parse_status skips headers and counts ignored files apart") {
     const auto changes = wt::git::parse_status(
-        "# branch.oid 0123\0# branch.head main\0! build/\0"s);
+        "# branch.oid 0123\0# branch.head main\0! build/\0! x.env\0"s);
+    CHECK(changes.ignored == 2);
+    // Ignored files aren't changes.
     CHECK(changes.empty());
 }
 
