@@ -3,7 +3,7 @@
 `wt` is a small C++ CLI that takes the friction out of managing Git worktrees when you (and agents like Claude or Codex) are working on several things at once.
 
 > Status: early development.
-> `wt list` and `wt new` work; switching and removing worktrees are not implemented yet.
+> `wt list`, `wt new`, and `wt status` work; switching and removing worktrees are not implemented yet.
 
 ## Requirements
 
@@ -60,6 +60,7 @@ git ls-files '*.cpp' '*.hpp' | xargs clang-format -i
 | `wt -V`, `wt --version` | Print the version (e.g. `wt 0.1.0`) and exit. |
 | `wt list` | List every worktree of the current repository with its branch, status, and path. |
 | `wt new <task>` | Create branch `<task>` from the integration branch in a new worktree, and print its path. |
+| `wt status <task>` | Summarize the task's worktree: HEAD, uncommitted changes, and commits ahead of or behind the integration branch. |
 
 The version is set by `project(wt VERSION ...)` in `CMakeLists.txt`.
 
@@ -85,6 +86,7 @@ Paths under your home directory are shown with `~`.
 | `-` | A bare repository, which has no working files. |
 
 Checking status never modifies a worktree: `wt` runs `git status` with `--no-optional-locks`, so it won't touch the index or contend with other Git processes.
+Untracked files always count, even if `status.showUntrackedFiles` is set to `no`.
 `wt list` exits 1 outside a Git repository.
 
 ### `wt new <task>`
@@ -140,6 +142,43 @@ If `origin/<task>` exists, `wt` warns but still creates a new local branch from 
 
 **If Git fails partway**, for example because a `post-checkout` hook exits non-zero after the worktree was created, `wt new` exits 1, shows Git's output, and lists the branch or directory left behind.
 It never removes them itself.
+
+### `wt status <task>`
+
+```
+$ wt status feature-x
+feature-x
+
+Path:         ~/Dev/.worktree-manager.wt-a13f92c4/feature-x
+HEAD:         3f2a9c1 Handle empty input
+Status:       dirty
+Staged:       1
+Modified:     2
+Untracked:    0
+Conflicts:    0
+Ahead main:   3
+Behind main:  1
+```
+
+Finds the worktree that has branch `<task>` checked out, so it also works for worktrees `wt` didn't create, including the main checkout.
+It gives the same answer from any worktree of the repository.
+
+| Field | Meaning |
+| --- | --- |
+| `Status` | As in `wt list`. |
+| `Staged` | Files with changes in the index. |
+| `Modified` | Tracked files with changes not yet staged. A file with both staged and unstaged changes counts in both. |
+| `Untracked` | Untracked files, as `git status` lists them: an untracked directory counts once. Ignored files don't count. |
+| `Conflicts` | Files with unresolved merge conflicts. |
+| `Ahead <base>`, `Behind <base>` | Commits on the task's branch that the local integration branch lacks, and the reverse. |
+
+The integration branch is chosen as for `wt new`, and `wt` never fetches.
+The ahead and behind lines are left out for the integration branch itself and for a branch with no commits.
+If there is no integration branch, `wt status` warns and leaves them out.
+
+If the worktree's directory is gone, the status is `missing` and the change counts are left out; ahead and behind still show, since they only depend on the branch.
+If the status can't be read, `wt status` prints what it can and exits 1.
+It also exits 1 if no worktree has the branch checked out.
 
 ## Project layout
 

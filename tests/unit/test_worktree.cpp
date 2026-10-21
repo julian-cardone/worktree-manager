@@ -121,3 +121,65 @@ TEST_CASE("find_worktree_containing picks the deepest enclosing worktree") {
     CHECK_FALSE(find_worktree_containing(list, "/elsewhere").has_value());
     CHECK_FALSE(find_worktree_containing({}, "/code/repo").has_value());
 }
+
+TEST_CASE("parse_status counts nothing for a clean worktree") {
+    CHECK(wt::git::parse_status("").empty());
+}
+
+TEST_CASE("parse_status counts staged and unstaged changes separately") {
+    const auto changes = wt::git::parse_status(
+        "1 M. N... 100644 100644 100644 a a staged.txt\0"s
+        "1 .M N... 100644 100644 100644 a a modified.txt\0"s
+        "1 MM N... 100644 100644 100644 a a both.txt\0"s
+        "1 A. N... 000000 100644 100644 0 a added.txt\0"s
+        "1 .D N... 100644 100644 000000 a a deleted.txt\0"s);
+    CHECK(changes.staged == 3);
+    CHECK(changes.modified == 3);
+    CHECK(changes.untracked == 0);
+    CHECK(changes.conflicts == 0);
+    CHECK_FALSE(changes.empty());
+}
+
+TEST_CASE("parse_status skips a rename's original path") {
+    // The original path looks like an untracked entry, but isn't one.
+    const auto changes = wt::git::parse_status(
+        "2 R. N... 100644 100644 100644 a a R100 new.txt\0? old.txt\0"s
+        "? untracked.txt\0"s);
+    CHECK(changes.staged == 1);
+    CHECK(changes.modified == 0);
+    CHECK(changes.untracked == 1);
+}
+
+TEST_CASE("parse_status counts conflicts and untracked files") {
+    const auto changes = wt::git::parse_status(
+        "u UU N... 100644 100644 100644 100644 a b c conflict.txt\0"s
+        "? new.txt\0? dir/\0"s);
+    CHECK(changes.conflicts == 1);
+    CHECK(changes.untracked == 2);
+    CHECK(changes.staged == 0);
+}
+
+TEST_CASE("parse_status ignores headers and ignored files") {
+    const auto changes = wt::git::parse_status(
+        "# branch.oid 0123\0# branch.head main\0! build/\0"s);
+    CHECK(changes.empty());
+}
+
+TEST_CASE("parse_status rejects output it doesn't understand") {
+    using wt::git::Error;
+    using wt::git::parse_status;
+    CHECK_THROWS_AS(parse_status("garbage\0"s), Error);
+    CHECK_THROWS_AS(parse_status("1\0"s), Error);
+    CHECK_THROWS_AS(parse_status("1 M\0"s), Error);
+    CHECK_THROWS_AS(parse_status("? a\0\0"s), Error);
+}
+
+TEST_CASE("status_label names each status") {
+    using wt::git::Status;
+    using wt::git::status_label;
+    CHECK(status_label(Status::clean) == "clean");
+    CHECK(status_label(Status::dirty) == "dirty");
+    CHECK(status_label(Status::bare) == "-");
+    CHECK(status_label(Status::missing) == "missing");
+    CHECK(status_label(Status::unknown) == "unknown");
+}

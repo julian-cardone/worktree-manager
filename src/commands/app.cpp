@@ -2,6 +2,7 @@
 
 #include "commands/list.hpp"
 #include "commands/new.hpp"
+#include "commands/status.hpp"
 #include "ui/format.hpp"
 
 #include <CLI/CLI.hpp>
@@ -29,6 +30,12 @@ std::unique_ptr<CLI::App> make_app() {
                      "Task name, used as the branch name (e.g. feature-x or "
                      "claude/fix-login)")
         ->required();
+    app->add_subcommand("status",
+                        "Show a task's worktree: its HEAD, uncommitted "
+                        "changes, and commits ahead of or behind the "
+                        "integration branch")
+        ->add_option("task", "Task name, i.e. the worktree's branch")
+        ->required();
     return app;
 }
 
@@ -48,6 +55,10 @@ int run(int argc, const char* const* argv, const Context& ctx) {
         }
         if (auto* sub = app->get_subcommand("new"); sub->parsed()) {
             return new_command(ctx, sub->get_option("task")->as<std::string>());
+        }
+        if (auto* sub = app->get_subcommand("status"); sub->parsed()) {
+            return status_command(ctx,
+                                  sub->get_option("task")->as<std::string>());
         }
     } catch (const CLI::ParseError& e) {
         return app->exit(e, ctx.out, ctx.err);

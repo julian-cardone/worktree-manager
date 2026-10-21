@@ -2,6 +2,7 @@
 
 #include "git/git.hpp"
 
+#include <charconv>
 #include <system_error>
 
 namespace wt::git {
@@ -62,6 +63,41 @@ bool is_valid_branch_name(const fs::path& dir, std::string_view name) {
     // --branch expands shorthands like @{-1}; only accept names that are
     // already literal.
     return r.exit_code == 0 && first_line(r.out) == name;
+}
+
+std::string commit_summary(const fs::path& dir, std::string_view commit) {
+    // --no-show-signature keeps log.showSignature from adding GPG output.
+    const Result r = run(dir, {"log", "--no-show-signature", "-1",
+                               "--format=%h %s", std::string(commit), "--"});
+    if (r.exit_code != 0) {
+        throw Error(error_message(r.err));
+    }
+    return first_line(r.out);
+}
+
+Divergence divergence(const fs::path& dir, std::string_view ref,
+                      std::string_view base) {
+    // Prints "<only in base>\t<only in ref>".
+    const Result r =
+        run(dir, {"rev-list", "--left-right", "--count",
+                  std::string(base) + "..." + std::string(ref), "--"});
+    if (r.exit_code != 0) {
+        throw Error(error_message(r.err));
+    }
+    const char* pos = r.out.data();
+    const char* const end = pos + r.out.size();
+    // Reads a count followed by `separator`, advancing past both.
+    auto read_count = [&](std::size_t& count, char separator) {
+        const auto [next, ec] = std::from_chars(pos, end, count);
+        if (ec != std::errc() || next == end || *next != separator) {
+            throw Error("unexpected output from git rev-list");
+        }
+        pos = next + 1;
+    };
+    Divergence d{};
+    read_count(d.behind, '\t');
+    read_count(d.ahead, '\n');
+    return d;
 }
 
 std::string integration_branch(const fs::path& dir) {

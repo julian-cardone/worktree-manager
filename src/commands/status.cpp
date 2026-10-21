@@ -1,0 +1,113 @@
+#include "commands/status.hpp"
+
+#include "git/git.hpp"
+#include "git/repo.hpp"
+#include "git/worktree.hpp"
+#include "ui/format.hpp"
+
+#include <optional>
+#include <ostream>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+namespace wt {
+
+namespace {
+
+// Tasks are branch names, so the task's worktree is the one with that branch
+// checked out.
+const git::Worktree& find_task_worktree(
+    const Context& ctx, const std::vector<git::Worktree>& worktrees,
+    const std::string& task) {
+    const git::Worktree* found = nullptr;
+    for (const auto& worktree : worktrees) {
+        if (worktree.branch != task) {
+            continue;
+        }
+        // Only possible if someone forced Git to check the branch out twice.
+        if (found != nullptr) {
+            throw std::runtime_error("branch '" + task +
+                                     "' is checked out in more than one "
+                                     "worktree; `wt list` shows them");
+        }
+        found = &worktree;
+    }
+    if (found != nullptr) {
+        return *found;
+    }
+    if (git::is_valid_branch_name(ctx.cwd, task) &&
+        git::ref_exists(ctx.cwd, "refs/heads/" + task)) {
+        throw std::runtime_error("branch '" + task +
+                                 "' isn't checked out in any worktree");
+    }
+    throw std::runtime_error("no worktree for task '" + task +
+                             "'; `wt list` shows them all");
+}
+
+// The integration branch, or nothing (with a warning) if there isn't one.
+// Not having one only costs the ahead/behind counts, so it isn't fatal.
+std::optional<std::string> try_integration_branch(const Context& ctx) {
+    try {
+        return git::integration_branch(ctx.cwd);
+    } catch (const git::Error& e) {
+        ctx.err << "wt: warning: not comparing with an integration branch: "
+                << ui::printable(e.what()) << '\n';
+        return std::nullopt;
+    }
+}
+
+}  // namespace
+
+int status_command(const Context& ctx, const std::string& task) {
+    const auto worktrees = git::list_worktrees(ctx.cwd);
+    const git::Worktree& worktree = find_task_worktree(ctx, worktrees, task);
+    // Git reports an all-zero HEAD for a branch with no commits yet.
+    const bool unborn =
+        worktree.head.find_first_not_of('0') == std::string::npos;
+    const auto status = git::worktree_status(worktree);
+
+    std::vector<std::vector<std::string>> rows = {
+        {"Path:", ui::printable(ui::tilde_path(worktree.path, ctx.home))},
+        {"HEAD:",
+         unborn ? "(no commits)"
+                : ui::printable(git::commit_summary(ctx.cwd, worktree.head))},
+        {"Status:", std::string(git::status_label(status.status))},
+    };
+    if (status.status == git::Status::clean ||
+        status.status == git::Status::dirty) {
+        const auto& changes = status.changes;
+        rows.push_back({"Staged:", std::to_string(changes.staged)});
+        rows.push_back({"Modified:", std::to_string(changes.modified)});
+        rows.push_back({"Untracked:", std::to_string(changes.untracked)});
+        rows.push_back({"Conflicts:", std::to_string(changes.conflicts)});
+    }
+    // Branch refs rather than the worktree's HEAD, so this works even when
+    // the worktree's directory is gone.
+    if (!unborn) {
+        if (const auto base = try_integration_branch(ctx);
+            base && *base != task) {
+            const auto d = git::divergence(ctx.cwd, "refs/heads/" + task,
+                                           "refs/heads/" + *base);
+            const std::string name = ui::printable(*base);
+            rows.push_back({"Ahead " + name + ":", std::to_string(d.ahead)});
+            rows.push_back({"Behind " + name + ":", std::to_string(d.behind)});
+        }
+    }
+
+    ctx.out << ui::printable(task) << "\n\n" << ui::format_table(rows);
+
+    if (status.status == git::Status::missing) {
+        ctx.err << "wt: warning: the worktree's directory is gone; "
+                   "`git worktree prune` makes Git forget it\n";
+    }
+    if (status.status == git::Status::unknown) {
+        ctx.err << "wt: error: cannot read the status of "
+                << ui::printable(worktree.path.string()) << ": "
+                << ui::printable(status.detail) << '\n';
+        return 1;
+    }
+    return 0;
+}
+
+}  // namespace wt

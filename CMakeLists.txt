@@ -31,6 +31,7 @@ add_library(wt_core STATIC
   src/commands/app.cpp
   src/commands/list.cpp
   src/commands/new.cpp
+  src/commands/status.cpp
   src/git/git.cpp
   src/git/repo.cpp
   src/git/worktree.cpp

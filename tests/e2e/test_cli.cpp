@@ -846,3 +846,260 @@ TEST_CASE("wt new handles spaces in the repository path") {
                StartsWith(".my repo.wt-"));
     CHECK(fs::is_regular_file(path / "README"));
 }
+
+// ---------------------------------------------------------------------------
+// wt status
+// ---------------------------------------------------------------------------
+
+namespace {
+
+void commit_file(const Sandbox& box, const fs::path& dir,
+                 const std::string& name, const std::string& content) {
+    write_file(dir / name, content);
+    git(box, dir, {"add", name});
+    git(box, dir, {"commit", "-q", "-m", "change " + name});
+}
+
+// Returns the line of `out` starting with `label`, e.g. "Staged:".
+std::string field(const std::string& out, const std::string& label) {
+    for (const auto& line : lines(out)) {
+        if (line.starts_with(label)) {
+            return line;
+        }
+    }
+    FAIL("no " << label << " line in:\n" << out);
+    return {};
+}
+
+}  // namespace
+
+TEST_CASE("wt status summarizes a clean task worktree") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature-x");
+    const std::string head =
+        git_output(box, repo, {"log", "-1", "--format=%h %s", "main"});
+
+    auto r = run_wt(box, repo, {"status", "feature-x"});
+    CHECK(r.code == 0);
+    CHECK(r.err.empty());
+    CHECK(r.out ==
+          "feature-x\n"
+          "\n"
+          "Path:         " +
+              path.string() +
+              "\n"
+              "HEAD:         " +
+              head +
+              "\n"
+              "Status:       clean\n"
+              "Staged:       0\n"
+              "Modified:     0\n"
+              "Untracked:    0\n"
+              "Conflicts:    0\n"
+              "Ahead main:   0\n"
+              "Behind main:  0\n");
+}
+
+TEST_CASE(
+    "wt status counts changes and commits against the integration branch") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature-x");
+    commit_file(box, path, "a.txt", "a\n");
+    commit_file(box, path, "b.txt", "b\n");
+    commit_file(box, path, "c.txt", "c\n");
+    commit_file(box, repo, "main.txt", "main\n");
+
+    write_file(path / "staged.txt", "staged\n");
+    git(box, path, {"add", "staged.txt"});
+    write_file(path / "README", "changed\n");
+    write_file(path / "a.txt", "changed\n");
+    write_file(path / "untracked.txt", "new\n");
+
+    auto r = run_wt(box, repo, {"status", "feature-x"});
+    CHECK(r.code == 0);
+    CHECK(r.err.empty());
+    CHECK(field(r.out, "HEAD:") ==
+          "HEAD:         " +
+              git_output(box, path, {"log", "-1", "--format=%h %s"}));
+    CHECK(field(r.out, "Status:") == "Status:       dirty");
+    CHECK(field(r.out, "Staged:") == "Staged:       1");
+    CHECK(field(r.out, "Modified:") == "Modified:     2");
+    CHECK(field(r.out, "Untracked:") == "Untracked:    1");
+    CHECK(field(r.out, "Conflicts:") == "Conflicts:    0");
+    CHECK(field(r.out, "Ahead main:") == "Ahead main:   3");
+    CHECK(field(r.out, "Behind main:") == "Behind main:  1");
+}
+
+TEST_CASE("wt status reports merge conflicts") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature");
+    commit_file(box, path, "README", "feature\n");
+    commit_file(box, repo, "README", "main\n");
+    const Result merge =
+        run_in(box, path, {find_on_path("git"), "merge", "-q", "main"});
+    REQUIRE(merge.code != 0);
+
+    auto r = run_wt(box, repo, {"status", "feature"});
+    CHECK(r.code == 0);
+    CHECK(field(r.out, "Status:") == "Status:       dirty");
+    CHECK(field(r.out, "Conflicts:") == "Conflicts:    1");
+    CHECK(field(r.out, "Staged:") == "Staged:       0");
+}
+
+TEST_CASE("wt status gives the same answer from any worktree") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path feature = wt_new(box, repo, "claude/fix");
+    // A worktree wt didn't create is found by its branch too.
+    const fs::path other = box.work() / "elsewhere";
+    git(box, repo, {"worktree", "add", "-q", "-b", "other", other.string()});
+    fs::create_directories(feature / "src");
+    write_file(feature / "wip.txt", "wip\n");
+
+    const auto expected = run_wt(box, repo, {"status", "claude/fix"});
+    REQUIRE(expected.code == 0);
+    CHECK(lines(expected.out).at(0) == "claude/fix");
+    CHECK(field(expected.out, "Untracked:") == "Untracked:    1");
+    for (const fs::path& from : {feature / "src", other}) {
+        INFO("running from " << from);
+        auto r = run_wt(box, from, {"status", "claude/fix"});
+        CHECK(r.code == 0);
+        CHECK(r.out == expected.out);
+    }
+    auto r = run_wt(box, feature, {"status", "other"});
+    CHECK(r.code == 0);
+    CHECK(field(r.out, "Path:") == "Path:         " + other.string());
+}
+
+TEST_CASE("wt status on the integration branch leaves out ahead and behind") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    auto r = run_wt(box, repo, {"status", "main"});
+    CHECK(r.code == 0);
+    CHECK(r.err.empty());
+    CHECK(field(r.out, "Status:") == "Status:     clean");
+    CHECK_THAT(r.out,
+               !ContainsSubstring("Ahead") && !ContainsSubstring("Behind"));
+}
+
+TEST_CASE("wt status fails for a task without a worktree") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+
+    auto r = run_wt(box, repo, {"status", "nope"});
+    CHECK(r.code == 1);
+    CHECK(r.out.empty());
+    CHECK(r.err ==
+          "wt: error: no worktree for task 'nope'; `wt list` shows them all\n");
+
+    git(box, repo, {"branch", "parked"});
+    r = run_wt(box, repo, {"status", "parked"});
+    CHECK(r.code == 1);
+    CHECK(r.out.empty());
+    CHECK(r.err ==
+          "wt: error: branch 'parked' isn't checked out in any worktree\n");
+
+    r = run_wt(box, repo, {"status", "--", "-x"});
+    CHECK(r.code == 1);
+    CHECK_THAT(r.err, StartsWith("wt: error: no worktree for task '-x'"));
+}
+
+TEST_CASE("wt status reports a worktree whose directory was deleted") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "gone");
+    commit_file(box, path, "a.txt", "a\n");
+    fs::remove_all(path);
+
+    auto r = run_wt(box, repo, {"status", "gone"});
+    CHECK(r.code == 0);
+    CHECK(field(r.out, "Status:") == "Status:       missing");
+    CHECK_THAT(r.out, !ContainsSubstring("Staged:"));
+    CHECK(field(r.out, "Ahead main:") == "Ahead main:   1");
+    CHECK_THAT(r.err,
+               StartsWith("wt: warning: the worktree's directory is gone"));
+}
+
+TEST_CASE("wt status fails when the worktree's status can't be read") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "broken");
+    fs::remove(path / ".git");
+
+    auto r = run_wt(box, repo, {"status", "broken"});
+    CHECK(r.code == 1);
+    CHECK(field(r.out, "Status:") == "Status:       unknown");
+    CHECK_THAT(r.out, !ContainsSubstring("Staged:"));
+    CHECK_THAT(r.err, StartsWith("wt: error: cannot read the status of " +
+                                 path.string()));
+}
+
+TEST_CASE("wt status handles a repository with no commits") {
+    Sandbox box;
+    const fs::path repo = box.work() / "empty";
+    git(box, box.work(), {"init", "-q", "-b", "main", repo.string()});
+    write_file(repo / "new.txt", "new\n");
+
+    auto r = run_wt(box, repo, {"status", "main"});
+    CHECK(r.code == 0);
+    CHECK(r.err.empty());
+    CHECK(field(r.out, "HEAD:") == "HEAD:       (no commits)");
+    CHECK(field(r.out, "Untracked:") == "Untracked:  1");
+}
+
+TEST_CASE("wt status warns, but still reports, without an integration branch") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    git(box, repo, {"branch", "-m", "main", "trunk"});
+
+    auto r = run_wt(box, repo, {"status", "trunk"});
+    CHECK(r.code == 0);
+    CHECK(field(r.out, "Status:") == "Status:     clean");
+    CHECK_THAT(r.out, !ContainsSubstring("Ahead"));
+    CHECK_THAT(r.err,
+               StartsWith("wt: warning: not comparing with an integration "
+                          "branch: cannot tell which branch to start from"));
+}
+
+TEST_CASE("wt status and wt list see untracked files Git config hides") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    git(box, repo, {"config", "status.showUntrackedFiles", "no"});
+    write_file(repo / "new.txt", "new\n");
+
+    auto r = run_wt(box, repo, {"status", "main"});
+    CHECK(field(r.out, "Status:") == "Status:     dirty");
+    CHECK(field(r.out, "Untracked:") == "Untracked:  1");
+    auto list = run_wt(box, repo, {"list"});
+    CHECK_THAT(row_for(list.out, repo.string()), StartsWith("* main    dirty"));
+}
+
+TEST_CASE("wt status sanitizes commit subjects") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    git(box, repo, {"commit", "-q", "--allow-empty", "-m", "evil\x1b[31m"});
+
+    auto r = run_wt(box, repo, {"status", "main"});
+    CHECK(r.code == 0);
+    CHECK_THAT(field(r.out, "HEAD:"), ContainsSubstring(" evil?[31m"));
+    CHECK(r.out.find('\x1b') == std::string::npos);
+}
+
+TEST_CASE("wt status outside a repository fails with a clear error") {
+    Sandbox box;
+    auto r = run_wt(box, box.work(), {"status", "feature"});
+    CHECK(r.code == 1);
+    CHECK(r.out.empty());
+    CHECK_THAT(r.err, StartsWith("wt: error: not a git repository"));
+}
+
+TEST_CASE("wt status requires a task name") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    auto r = run_wt(box, repo, {"status"});
+    CHECK(r.code != 0);
+    CHECK_THAT(r.err, ContainsSubstring("task"));
+}

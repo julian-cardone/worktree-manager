@@ -63,6 +63,56 @@ std::vector<Worktree> parse_worktree_list(std::string_view porcelain) {
     return worktrees;
 }
 
+Changes parse_status(std::string_view porcelain) {
+    // Each entry is NUL-terminated. A rename or copy ("2") is followed by an
+    // extra entry holding the original path, which must not be read as an
+    // entry of its own: a path like "? x" would otherwise count as untracked.
+    Changes changes;
+    bool original_path_next = false;
+    std::size_t pos = 0;
+    while (pos < porcelain.size()) {
+        std::size_t end = porcelain.find('\0', pos);
+        if (end == std::string_view::npos) {
+            end = porcelain.size();
+        }
+        const std::string_view entry = porcelain.substr(pos, end - pos);
+        pos = end + 1;
+
+        if (original_path_next) {
+            original_path_next = false;
+            continue;
+        }
+        if (entry.size() < 2 || entry[1] != ' ') {
+            throw Error("unexpected output from git status");
+        }
+        switch (entry.front()) {
+            case '1':
+            case '2':
+                // "<type> XY ...": X is the staged state, Y the unstaged
+                // one, and '.' means unchanged.
+                if (entry.size() < 4) {
+                    throw Error("unexpected output from git status");
+                }
+                changes.staged += entry[2] != '.' ? 1 : 0;
+                changes.modified += entry[3] != '.' ? 1 : 0;
+                original_path_next = entry.front() == '2';
+                break;
+            case 'u':
+                ++changes.conflicts;
+                break;
+            case '?':
+                ++changes.untracked;
+                break;
+            case '#':  // headers, e.g. from --branch
+            case '!':  // ignored files, from --ignored
+                break;
+            default:
+                throw Error("unexpected output from git status");
+        }
+    }
+    return changes;
+}
+
 std::vector<Worktree> list_worktrees(const fs::path& dir) {
     // -z keeps paths containing newlines from corrupting the output.
     const Result r = run(dir, {"worktree", "list", "--porcelain", "-z"});
@@ -105,30 +155,56 @@ std::optional<std::size_t> find_worktree_containing(
 
 StatusResult worktree_status(const Worktree& worktree) {
     if (worktree.bare) {
-        return {Status::bare, {}};
+        return {Status::bare, {}, {}};
     }
     std::error_code ec;
     if (!fs::is_directory(worktree.path, ec)) {
         if (ec && ec != std::errc::no_such_file_or_directory) {
-            return {Status::unknown, ec.message()};
+            return {Status::unknown, ec.message(), {}};
         }
-        return {Status::missing, {}};
+        return {Status::missing, {}, {}};
     }
     // Without its .git file, git would search upward and report the status of
     // whatever repository happens to enclose the directory.
     if (!fs::exists(worktree.path / ".git", ec)) {
         return {Status::unknown,
-                ec ? ec.message() : "its .git file is missing"};
+                ec ? ec.message() : "its .git file is missing",
+                {}};
     }
 
     // --no-optional-locks stops status from rewriting the index, so it can't
     // collide with another git process (e.g. an agent) using the worktree.
-    const Result r = run(
-        worktree.path, {"--no-optional-locks", "status", "--porcelain", "-z"});
+    // --untracked-files=normal overrides status.showUntrackedFiles=no, which
+    // would otherwise hide untracked files and report the worktree as clean.
+    const Result r =
+        run(worktree.path, {"--no-optional-locks", "status", "--porcelain=v2",
+                            "-z", "--untracked-files=normal"});
     if (r.exit_code != 0) {
-        return {Status::unknown, error_message(r.err)};
+        return {Status::unknown, error_message(r.err), {}};
     }
-    return {r.out.empty() ? Status::clean : Status::dirty, {}};
+    Changes changes;
+    try {
+        changes = parse_status(r.out);
+    } catch (const Error& e) {
+        return {Status::unknown, e.what(), {}};
+    }
+    return {changes.empty() ? Status::clean : Status::dirty, {}, changes};
+}
+
+std::string_view status_label(Status status) {
+    switch (status) {
+        case Status::clean:
+            return "clean";
+        case Status::dirty:
+            return "dirty";
+        case Status::bare:
+            return "-";
+        case Status::missing:
+            return "missing";
+        case Status::unknown:
+            return "unknown";
+    }
+    return "unknown";
 }
 
 }  // namespace wt::git

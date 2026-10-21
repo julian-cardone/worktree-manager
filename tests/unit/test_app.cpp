@@ -94,3 +94,14 @@ TEST_CASE("new --help describes the task argument") {
     CHECK(r.code == 0);
     CHECK_THAT(r.out, ContainsSubstring("task"));
 }
+
+TEST_CASE("help lists the status command") {
+    auto r = run_wt({"--help"});
+    CHECK_THAT(r.out, ContainsSubstring("status"));
+}
+
+TEST_CASE("status --help describes the task argument") {
+    auto r = run_wt({"status", "--help"});
+    CHECK(r.code == 0);
+    CHECK_THAT(r.out, ContainsSubstring("task"));
+}

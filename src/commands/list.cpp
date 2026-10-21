@@ -25,22 +25,6 @@ std::string branch_label(const git::Worktree& worktree) {
     return "(unknown)";
 }
 
-std::string status_label(git::Status status) {
-    switch (status) {
-        case git::Status::clean:
-            return "clean";
-        case git::Status::dirty:
-            return "dirty";
-        case git::Status::bare:
-            return "-";
-        case git::Status::missing:
-            return "missing";
-        case git::Status::unknown:
-            return "unknown";
-    }
-    return "unknown";
-}
-
 }  // namespace
 
 int list_command(const Context& ctx) {
@@ -60,7 +44,7 @@ int list_command(const Context& ctx) {
         const std::string marker = i == current ? "* " : "  ";
         rows.push_back(
             {marker + ui::printable(branch_label(worktree)),
-             status_label(status.status),
+             std::string(git::status_label(status.status)),
              ui::printable(ui::tilde_path(worktree.path, ctx.home))});
     }
     ctx.out << ui::format_table(rows);
