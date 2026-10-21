@@ -1,5 +1,7 @@
 #include "commands/app.hpp"
 
+#include "commands/list.hpp"
+
 #include <CLI/CLI.hpp>
 
 #include <exception>
@@ -13,6 +15,11 @@ std::unique_ptr<CLI::App> make_app() {
         "wt - manage Git worktrees for parallel work", "wt");
     app->set_version_flag("-V,--version", "wt " + std::string(kVersion),
                           "Print the wt version and exit");
+    app->require_subcommand(0, 1);
+    app->add_subcommand(
+        "list",
+        "List the repository's worktrees and whether each has uncommitted "
+        "changes");
     return app;
 }
 
@@ -27,11 +34,14 @@ int run(int argc, const char* const* argv, const Context& ctx) {
 
     try {
         app->parse(argc, argv);
+        if (app->got_subcommand("list")) {
+            return list_command(ctx);
+        }
     } catch (const CLI::ParseError& e) {
         return app->exit(e, ctx.out, ctx.err);
     } catch (const std::exception& e) {
-        // Last line of defense: report the failure instead of letting
-        // std::terminate abort the process with no useful message.
+        // Commands report failures (e.g. git::Error) by throwing; this also
+        // keeps anything unexpected from aborting with no useful message.
         ctx.err << "wt: error: " << e.what() << '\n';
         return 1;
     }

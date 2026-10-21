@@ -15,11 +15,13 @@ inline constexpr std::string_view kVersion = WT_VERSION;
 
 // Everything a command needs from its environment. Commands must use this
 // rather than process-global state (std::filesystem::current_path(),
-// std::cout, ...) so tests can run them in-process against an isolated sandbox.
+// std::cout, getenv("HOME"), ...) so tests can run them in-process against an
+// isolated sandbox.
 struct Context {
     std::filesystem::path cwd;
     std::ostream& out;
     std::ostream& err;
+    std::filesystem::path home;  // empty if unknown; only used for display
 };
 
 // Builds the top-level `wt` command-line definition.

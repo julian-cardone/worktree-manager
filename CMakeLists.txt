@@ -28,7 +28,11 @@ target_compile_options(wt_warnings INTERFACE -Wall -Wextra -Wpedantic)
 # wt_core: everything except main(), so tests can link against it
 # ---------------------------------------------------------------------------
 add_library(wt_core STATIC
-  src/commands/app.cpp)
+  src/commands/app.cpp
+  src/commands/list.cpp
+  src/git/git.cpp
+  src/git/worktree.cpp
+  src/ui/format.cpp)
 
 target_include_directories(wt_core PUBLIC src)
 target_compile_definitions(wt_core PUBLIC WT_VERSION="${PROJECT_VERSION}")

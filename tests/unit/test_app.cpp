@@ -27,7 +27,7 @@ Result run_wt(std::vector<const char*> args) {
     wt::test::Sandbox box;
     std::ostringstream out, err;
     int code = wt::run(static_cast<int>(args.size()), args.data(),
-                       wt::Context{box.work(), out, err});
+                       wt::Context{box.work(), out, err, box.home()});
     return {code, out.str(), err.str()};
 }
 
@@ -77,4 +77,9 @@ TEST_CASE("unknown arguments fail with an error on err") {
     CHECK(r.code == static_cast<int>(CLI::ExitCodes::ExtrasError));
     CHECK(r.out.empty());
     CHECK_THAT(r.err, ContainsSubstring("--bogus"));
+}
+
+TEST_CASE("help lists the list command") {
+    auto r = run_wt({"--help"});
+    CHECK_THAT(r.out, ContainsSubstring("list"));
 }

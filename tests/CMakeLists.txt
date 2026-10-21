@@ -7,7 +7,9 @@ include(Catch)
 
 # Unit tests: exercise wt_core in-process.
 add_executable(wt_unit_tests
-  unit/test_app.cpp)
+  unit/test_app.cpp
+  unit/test_format.cpp
+  unit/test_worktree.cpp)
 target_link_libraries(wt_unit_tests PRIVATE wt_core wt_warnings Catch2::Catch2WithMain)
 target_include_directories(wt_unit_tests PRIVATE .)
 catch_discover_tests(wt_unit_tests TEST_PREFIX "unit: ")

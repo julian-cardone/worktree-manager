@@ -2,13 +2,14 @@
 
 `wt` is a small C++ CLI that takes the friction out of managing Git worktrees when you (and agents like Claude or Codex) are working on several things at once.
 
-> Status: project skeleton.
-> `wt` builds and responds to `--help` / `--version`; no Git functionality yet.
+> Status: early development.
+> `wt list` works; creating, switching, and removing worktrees are not implemented yet.
 
 ## Requirements
 
 - A C++20 compiler (Apple Clang 15+, GCC 11+, or Clang 15+)
 - CMake 3.24+
+- Git 2.36+ on `PATH` at runtime
 - Network access on first configure (dependencies are fetched by CMake)
 
 Dependencies are pinned to release archives, verified by SHA256, and fetched automatically via CMake `FetchContent`:
@@ -44,7 +45,11 @@ Each suite can also be run directly, e.g. `./build/tests/wt_unit_tests` or `./bu
 ## Formatting
 
 Code style is defined in `.clang-format`.
-Format changed files with `clang-format -i <files>`.
+Format all sources with:
+
+```sh
+git ls-files '*.cpp' '*.hpp' | xargs clang-format -i
+```
 
 ## Usage
 
@@ -53,8 +58,33 @@ Format changed files with `clang-format -i <files>`.
 | `wt` | Print help. |
 | `wt -h`, `wt --help` | Print help and exit. |
 | `wt -V`, `wt --version` | Print the version (e.g. `wt 0.1.0`) and exit. |
+| `wt list` | List every worktree of the current repository with its branch, status, and path. |
 
 The version is set by `project(wt VERSION ...)` in `CMakeLists.txt`.
+
+### `wt list`
+
+Works from the main checkout or any linked worktree, and always lists the main worktree first.
+`*` marks the worktree you're in.
+Paths under your home directory are shown with `~`.
+
+```
+  BRANCH              STATUS  PATH
+* main                clean   ~/Dev/worktree-manager
+  feature/x           dirty   ~/Dev/worktree-manager.worktrees/feature-x
+  (detached 9744289)  clean   ~/Dev/worktree-manager.worktrees/experiment
+```
+
+| Status | Meaning |
+| --- | --- |
+| `clean` | No uncommitted changes. |
+| `dirty` | Staged, unstaged, or untracked changes (ignored files don't count). |
+| `missing` | The worktree's directory no longer exists. Git still tracks it until `git worktree prune`. |
+| `unknown` | The status couldn't be read; a warning on stderr explains why. |
+| `-` | A bare repository, which has no working files. |
+
+Checking status never modifies a worktree: `wt` runs `git status` with `--no-optional-locks`, so it won't touch the index or contend with other Git processes.
+`wt list` exits 1 outside a Git repository.
 
 ## Project layout
 
@@ -63,8 +93,8 @@ CMakeLists.txt        # top-level build; produces build/wt
 src/
   main.cpp            # entry point; delegates to wt::run
   commands/           # CLI definition and command handlers; commands take a wt::Context
-  git/                # Git integration (not yet implemented)
-  ui/                 # terminal output helpers (not yet implemented)
+  git/                # runs git and parses its output
+  ui/                 # terminal output helpers (tables, path display)
 tests/
   unit/               # Catch2 unit tests
   e2e/                # Catch2 tests that drive the built binary
