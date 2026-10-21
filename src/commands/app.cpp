@@ -1,6 +1,8 @@
 #include "commands/app.hpp"
 
 #include "commands/list.hpp"
+#include "commands/new.hpp"
+#include "ui/format.hpp"
 
 #include <CLI/CLI.hpp>
 
@@ -20,6 +22,13 @@ std::unique_ptr<CLI::App> make_app() {
         "list",
         "List the repository's worktrees and whether each has uncommitted "
         "changes");
+    app->add_subcommand("new",
+                        "Create a branch and worktree for a task, starting "
+                        "from the integration branch")
+        ->add_option("task",
+                     "Task name, used as the branch name (e.g. feature-x or "
+                     "claude/fix-login)")
+        ->required();
     return app;
 }
 
@@ -37,12 +46,16 @@ int run(int argc, const char* const* argv, const Context& ctx) {
         if (app->got_subcommand("list")) {
             return list_command(ctx);
         }
+        if (auto* sub = app->get_subcommand("new"); sub->parsed()) {
+            return new_command(ctx, sub->get_option("task")->as<std::string>());
+        }
     } catch (const CLI::ParseError& e) {
         return app->exit(e, ctx.out, ctx.err);
     } catch (const std::exception& e) {
         // Commands report failures (e.g. git::Error) by throwing; this also
         // keeps anything unexpected from aborting with no useful message.
-        ctx.err << "wt: error: " << e.what() << '\n';
+        // Messages can quote branch names and paths, so sanitize them.
+        ctx.err << "wt: error: " << ui::printable(e.what()) << '\n';
         return 1;
     }
     return 0;

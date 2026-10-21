@@ -3,7 +3,7 @@
 `wt` is a small C++ CLI that takes the friction out of managing Git worktrees when you (and agents like Claude or Codex) are working on several things at once.
 
 > Status: early development.
-> `wt list` works; creating, switching, and removing worktrees are not implemented yet.
+> `wt list` and `wt new` work; switching and removing worktrees are not implemented yet.
 
 ## Requirements
 
@@ -59,6 +59,7 @@ git ls-files '*.cpp' '*.hpp' | xargs clang-format -i
 | `wt -h`, `wt --help` | Print help and exit. |
 | `wt -V`, `wt --version` | Print the version (e.g. `wt 0.1.0`) and exit. |
 | `wt list` | List every worktree of the current repository with its branch, status, and path. |
+| `wt new <task>` | Create branch `<task>` from the integration branch in a new worktree, and print its path. |
 
 The version is set by `project(wt VERSION ...)` in `CMakeLists.txt`.
 
@@ -71,8 +72,8 @@ Paths under your home directory are shown with `~`.
 ```
   BRANCH              STATUS  PATH
 * main                clean   ~/Dev/worktree-manager
-  feature/x           dirty   ~/Dev/worktree-manager.worktrees/feature-x
-  (detached 9744289)  clean   ~/Dev/worktree-manager.worktrees/experiment
+  feature/x           dirty   ~/Dev/.worktree-manager.wt-a13f92c4/feature-x
+  (detached 9744289)  clean   ~/Dev/experiment
 ```
 
 | Status | Meaning |
@@ -86,6 +87,60 @@ Paths under your home directory are shown with `~`.
 Checking status never modifies a worktree: `wt` runs `git status` with `--no-optional-locks`, so it won't touch the index or contend with other Git processes.
 `wt list` exits 1 outside a Git repository.
 
+### `wt new <task>`
+
+```sh
+cd "$(wt new claude/fix-login)"
+```
+
+Creates the branch `<task>` from the integration branch and checks it out in a new worktree.
+The worktree's absolute path is the only thing printed on stdout, so the command composes with `cd` and scripts; messages and warnings go to stderr.
+It works from the main checkout or any linked worktree, and always branches from the integration branch, not from the current one.
+
+**Where worktrees go.**
+Every worktree `wt` creates lives in one hidden container next to the main checkout:
+
+```
+~/Dev/worktree-manager/                       # main checkout
+~/Dev/.worktree-manager.wt-a13f92c4/          # container
+    .wt-managed                               # ownership marker
+    feature-x/
+    claude-fix-login/                         # task claude/fix-login
+```
+
+The suffix is derived from the path of the repository's Git directory, so it is stable for a repository and distinct between repositories.
+Moving the repository changes the suffix; `wt` then starts a new container and leaves the old one untouched.
+`.wt-managed` names the repository that owns the container.
+`wt` only uses a container that is a real directory (not a symlink) with a marker naming the current repository; anything else at that path makes it stop with an error rather than reuse or overwrite it.
+For a bare repository, the container sits next to it and drops the `.git` suffix (`repo.git` → `.repo.wt-…`).
+
+**The integration branch** is the first of these that applies.
+`wt` never fetches, and always starts from the local branch:
+
+1. `git config wt.integrationBranch <branch>`, if set.
+   It must name an existing local branch.
+2. The branch `origin/HEAD` points to (set by `git clone`, or by `git remote set-head origin <branch>`).
+   A local branch of the same name must exist.
+3. A local `main`, then `master`.
+
+If none applies, `wt new` fails rather than guessing.
+
+**Task names** become the branch name as-is, and the worktree folder name with `/` replaced by `-`.
+They may contain only letters, digits, `.`, `_`, `-`, and `/`, must be valid Git branch names, and are at most 100 characters.
+They can't start with `-` or `.`, start or end with `/`, or contain `//` or `..`.
+
+**Before creating anything**, `wt new` fails if:
+
+- the branch already exists locally;
+- anything exists at the target path, including an empty directory, a file, or a dangling symlink (e.g. `a/b` and `a-b` would share a folder);
+- Git still has a worktree registered at the target path, even one whose directory was deleted (`git worktree prune` clears those);
+- the container exists but isn't verifiably owned by this repository.
+
+If `origin/<task>` exists, `wt` warns but still creates a new local branch from the integration branch, without tracking it.
+
+**If Git fails partway**, for example because a `post-checkout` hook exits non-zero after the worktree was created, `wt new` exits 1, shows Git's output, and lists the branch or directory left behind.
+It never removes them itself.
+
 ## Project layout
 
 ```
@@ -94,6 +149,7 @@ src/
   main.cpp            # entry point; delegates to wt::run
   commands/           # CLI definition and command handlers; commands take a wt::Context
   git/                # runs git and parses its output
+  layout/             # where wt puts worktrees: task names and the owned container
   ui/                 # terminal output helpers (tables, path display)
 tests/
   unit/               # Catch2 unit tests

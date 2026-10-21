@@ -30,8 +30,12 @@ target_compile_options(wt_warnings INTERFACE -Wall -Wextra -Wpedantic)
 add_library(wt_core STATIC
   src/commands/app.cpp
   src/commands/list.cpp
+  src/commands/new.cpp
   src/git/git.cpp
+  src/git/repo.cpp
   src/git/worktree.cpp
+  src/layout/container.cpp
+  src/layout/task.cpp
   src/ui/format.cpp)
 
 target_include_directories(wt_core PUBLIC src)

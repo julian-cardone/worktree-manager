@@ -83,3 +83,14 @@ TEST_CASE("help lists the list command") {
     auto r = run_wt({"--help"});
     CHECK_THAT(r.out, ContainsSubstring("list"));
 }
+
+TEST_CASE("help lists the new command") {
+    auto r = run_wt({"--help"});
+    CHECK_THAT(r.out, ContainsSubstring("new"));
+}
+
+TEST_CASE("new --help describes the task argument") {
+    auto r = run_wt({"new", "--help"});
+    CHECK(r.code == 0);
+    CHECK_THAT(r.out, ContainsSubstring("task"));
+}
