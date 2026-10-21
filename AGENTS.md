@@ -28,7 +28,7 @@ As we review and modify the codebase, watch for:
 - **Dead Code:** Remove unused or obsolete code.
 - **Shared Code:** Extract common functionality when it genuinely reduces duplication or improves maintainability.
 - **Constants:** Prefer constants at the lowest appropriate scope. Only share constants when they represent the same concept, not merely because their values match.
-- **Significant Changes:** Surface changes that provide meaningful value but involve substantial refactoring, architectural decisions, or important trade-offs before implementing them.
+- **Significant Changes:** Significant changes are OK to surface if they will genuinely add value.
 
 Implement straightforward, clearly beneficial improvements where appropriate. Surface decisions that require my input before proceeding.
 
@@ -45,24 +45,24 @@ Implement straightforward, clearly beneficial improvements where appropriate. Su
 
 ## 4. Dogfooding `wt`
 
-All development on this repository must exercise `wt` as the intended workflow.
+All development on this repository must exercise `wt` as the intended worktree workflow.
 
-- All new feature, fix, refactor, review, or other development work must begin in a new worktree created through `wt`. Do not perform new development work directly in the primary checkout.
-- Use `wt` for every worktree lifecycle operation, and do not use agent-provided worktree tools. Never do these with Git directly:
-  - `git worktree` in any form (`add`, `remove`, `prune`, `move`, `lock`, ...);
-  - `git switch` or `git checkout` to create or change the branch a worktree has checked out;
-  - deleting or renaming task branches (`git branch -d`, `-D`, `-m`, `-M`);
-  - merging a task into the integration branch (use `wt merge`).
-- This prohibition applies regardless of how Git is invoked, including `git -C`, absolute paths, wrappers, shell indirection, command substitution, or scripts. `.claude/settings.json` denies the common forms; the rest relies on you following this rule.
-- General Git operations that `wt` does not intend to replace are allowed, e.g. `git status`, `git diff`, `git log`, `git add`, `git commit`, and `git restore`.
-- Do file-level work, including conflict resolution, with `git restore` (e.g. `git restore --ours <file>`, `git restore --source=<commit> <file>`), never `git checkout`. Because `git checkout` can also switch branches, `.claude/settings.json` denies it outright.
-- If `wt` is broken, unsafe, or lacks a lifecycle capability required to continue, stop and report the limitation instead of working around it. Keep the missing-capabilities section of `project-notes/wt-usage.md` current as gaps are discovered or resolved.
-- Friction in general Git workflows is not by itself a reason to add a `wt` command; propose one only when it falls within the product boundary above.
-- Record meaningful friction, confusing behavior, failures, or safety concerns encountered while using `wt` in `project-notes/wt-usage.md`.
+- All new feature, fix, refactor, or other code-changing work must begin in a new worktree created through `wt`. Do not make development changes directly in the primary checkout.
+- Use `wt` for every worktree lifecycle operation, and do not use agent-provided worktree tools.
+- Do not use Git directly to:
+  - create, remove, prune, move, lock, or otherwise manage worktrees;
+  - switch or check out a different branch for a worktree;
+  - delete or rename task branches;
+  - merge a task branch into the integration branch.
+- General Git operations outside the `wt` product boundary are allowed, including `git status`, `git diff`, `git log`, `git add`, `git commit`, and `git restore`.
+- Use `git restore` for file-level restoration and conflict resolution; do not use `git checkout`, because it can also change the branch checked out by a worktree.
+- If `wt` is broken, unsafe, or lacks a required worktree-lifecycle capability, stop and report the limitation instead of bypassing it. Keep the missing-capabilities section of `project-notes/wt-usage.md` current as gaps are discovered or resolved.
+- Friction in general Git workflows is not by itself a reason to add a `wt` command. Only propose commands that fit the product boundary above.
+- Record meaningful `wt` friction, confusing behavior, failures, or safety concerns in `project-notes/wt-usage.md`.
 - Record significant product, architecture, safety, reliability, performance, or usability findings in `project-notes/findings.md`, and surface important findings to me when discovered.
 - Do not log routine successful commands or generate unnecessary noise.
 
-The purpose of these rules is to continuously exercise `wt` through real development so its limitations and friction are discovered rather than bypassed.
+The purpose of these rules is to continuously exercise `wt` through real development so its worktree-lifecycle limitations and friction are discovered rather than bypassed.
 
 ## 5. Code Quality & Documentation
 
