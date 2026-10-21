@@ -1,6 +1,7 @@
 #include "commands/app.hpp"
 
 #include "commands/list.hpp"
+#include "commands/merge.hpp"
 #include "commands/new.hpp"
 #include "commands/remove.hpp"
 #include "commands/status.hpp"
@@ -46,6 +47,11 @@ std::unique_ptr<CLI::App> make_app() {
     remove->add_flag("--delete-ignored",
                      "Remove the worktree even if it holds ignored files, "
                      "deleting them");
+    app->add_subcommand("merge",
+                        "Merge a task's branch into the integration branch; "
+                        "on a conflict, abort and list the conflicting files")
+        ->add_option("task", "Task name, i.e. the branch to merge")
+        ->required();
     return app;
 }
 
@@ -70,6 +76,10 @@ int run(int argc, const char* const* argv, const Context& ctx) {
             return remove_command(
                 ctx, sub->get_option("task")->as<std::string>(),
                 sub->get_option("--delete-ignored")->as<bool>());
+        }
+        if (auto* sub = app->get_subcommand("merge"); sub->parsed()) {
+            return merge_command(ctx,
+                                 sub->get_option("task")->as<std::string>());
         }
         if (auto* sub = app->get_subcommand("status"); sub->parsed()) {
             return status_command(ctx,

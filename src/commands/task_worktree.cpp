@@ -6,23 +6,28 @@
 
 namespace wt {
 
-const git::Worktree& find_task_worktree(
-    const std::filesystem::path& dir,
-    const std::vector<git::Worktree>& worktrees, const std::string& task) {
+const git::Worktree* find_branch_worktree(
+    const std::vector<git::Worktree>& worktrees, const std::string& branch) {
     const git::Worktree* found = nullptr;
     for (const auto& worktree : worktrees) {
-        if (worktree.branch != task) {
+        if (worktree.branch != branch) {
             continue;
         }
         // Only possible if someone forced Git to check the branch out twice.
         if (found != nullptr) {
-            throw std::runtime_error("branch '" + task +
+            throw std::runtime_error("branch '" + branch +
                                      "' is checked out in more than one "
                                      "worktree; `wt list` shows them");
         }
         found = &worktree;
     }
-    if (found != nullptr) {
+    return found;
+}
+
+const git::Worktree& find_task_worktree(
+    const std::filesystem::path& dir,
+    const std::vector<git::Worktree>& worktrees, const std::string& task) {
+    if (const auto* found = find_branch_worktree(worktrees, task)) {
         return *found;
     }
     if (git::is_valid_branch_name(dir, task) &&

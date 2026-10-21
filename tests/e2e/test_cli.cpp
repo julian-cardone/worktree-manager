@@ -1518,3 +1518,319 @@ TEST_CASE("wt remove requires a task name") {
     CHECK(r.code != 0);
     CHECK_THAT(r.err, ContainsSubstring("task"));
 }
+
+// --- wt merge ---
+
+namespace {
+
+std::string head_of(const Sandbox& box, const fs::path& dir) {
+    return git_output(box, dir, {"rev-parse", "HEAD"});
+}
+
+// Checks that a refused or failed merge left main's worktree exactly as it
+// was: same HEAD, nothing changed, and no merge in progress.
+void check_main_restored(const Sandbox& box, const fs::path& repo,
+                         const std::string& before) {
+    CHECK(head_of(box, repo) == before);
+    CHECK(git_output(box, repo, {"status", "--porcelain"}).empty());
+    CHECK_FALSE(fs::exists(repo / ".git" / "MERGE_HEAD"));
+}
+
+}  // namespace
+
+TEST_CASE("wt merge fast-forwards main and keeps the task") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "claude/fix-login");
+    commit_file(box, path, "a.txt", "a\n");
+
+    // Run from the task's own worktree, as an agent would.
+    auto r = run_wt(box, path, {"merge", "claude/fix-login"});
+    CHECK(r.code == 0);
+    CHECK(r.err.empty());
+    CHECK(r.out == "✓ Merged claude/fix-login into main\n");
+    CHECK(head_of(box, repo) == head_of(box, path));
+    CHECK(read_file(repo / "a.txt") == "a\n");
+    CHECK(git_output(box, repo, {"status", "--porcelain"}).empty());
+    CHECK(fs::is_regular_file(path / "a.txt"));
+    CHECK(git_output(box, path, {"branch", "--show-current"}) ==
+          "claude/fix-login");
+}
+
+TEST_CASE("wt merge creates a merge commit when main has moved on") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature");
+    commit_file(box, path, "a.txt", "a\n");
+    commit_file(box, repo, "b.txt", "b\n");
+    const std::string main_before = head_of(box, repo);
+    const std::string task_head = head_of(box, path);
+
+    auto r = run_wt(box, repo, {"merge", "feature"});
+    CHECK(r.code == 0);
+    CHECK(r.out == "✓ Merged feature into main\n");
+    CHECK(git_output(box, repo, {"log", "-1", "--format=%P"}) ==
+          main_before + " " + task_head);
+    CHECK(git_output(box, repo, {"log", "-1", "--format=%s"}) ==
+          "Merge branch 'feature' into main");
+    CHECK(read_file(repo / "a.txt") == "a\n");
+}
+
+TEST_CASE("wt merge merges the branch, not a tag of the same name") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature");
+    git(box, repo, {"tag", "feature"});
+    commit_file(box, path, "a.txt", "a\n");
+
+    auto r = run_wt(box, repo, {"merge", "feature"});
+    CHECK(r.code == 0);
+    CHECK(head_of(box, repo) == head_of(box, path));
+}
+
+TEST_CASE("wt merge merges a branch that has no worktree") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature");
+    commit_file(box, path, "a.txt", "a\n");
+    const std::string task_head = head_of(box, path);
+    git(box, repo, {"worktree", "remove", path.string()});
+
+    auto r = run_wt(box, repo, {"merge", "feature"});
+    CHECK(r.code == 0);
+    CHECK(head_of(box, repo) == task_head);
+}
+
+TEST_CASE("wt merge does nothing when main already has the task's commits") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    wt_new(box, repo, "feature");
+    commit_file(box, repo, "b.txt", "b\n");
+    const std::string before = head_of(box, repo);
+
+    auto r = run_wt(box, repo, {"merge", "feature"});
+    CHECK(r.code == 0);
+    CHECK(r.err.empty());
+    CHECK(r.out == "main already contains feature; nothing to merge\n");
+    check_main_restored(box, repo, before);
+}
+
+TEST_CASE("wt merge aborts a conflicting merge and lists the conflicts") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature-x");
+    fs::create_directories(path / "src");
+    write_file(path / "src" / "foo.cpp", "task\n");
+    write_file(path / "src" / "bar.cpp", "task\n");
+    write_file(path / "README", "task\n");
+    write_file(path / "clean.txt", "merges fine\n");
+    git(box, path, {"add", "."});
+    git(box, path, {"commit", "-q", "-m", "task"});
+    fs::create_directories(repo / "src");
+    write_file(repo / "src" / "foo.cpp", "main\n");
+    write_file(repo / "src" / "bar.cpp", "main\n");
+    git(box, repo, {"add", "."});
+    git(box, repo, {"commit", "-q", "-m", "main"});
+    const std::string before = head_of(box, repo);
+
+    auto r = run_wt(box, repo, {"merge", "feature-x"});
+    CHECK(r.code == 1);
+    CHECK(r.out.empty());
+    CHECK(r.err ==
+          "wt: error: merge blocked: feature-x conflicts with main\n"
+          "\n"
+          "Conflicts:\n"
+          "- src/bar.cpp\n"
+          "- src/foo.cpp\n"
+          "\n"
+          "main was restored; no merge remains in progress.\n");
+    check_main_restored(box, repo, before);
+    CHECK(read_file(repo / "src" / "foo.cpp") == "main\n");
+    CHECK(read_file(repo / "README") == "hello\n");
+    CHECK_FALSE(fs::exists(repo / "clean.txt"));
+    CHECK(read_file(path / "src" / "foo.cpp") == "task\n");
+}
+
+TEST_CASE("wt merge aborts a merge Git stops without conflicts") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature");
+    commit_file(box, path, "a.txt", "a\n");
+    commit_file(box, repo, "b.txt", "b\n");
+    const fs::path hook = repo / ".git" / "hooks" / "pre-merge-commit";
+    write_file(hook, "#!/bin/sh\necho 'hook says no' >&2\nexit 1\n");
+    fs::permissions(hook, fs::perms::owner_exec, fs::perm_options::add);
+    const std::string before = head_of(box, repo);
+
+    auto r = run_wt(box, repo, {"merge", "feature"});
+    CHECK(r.code == 1);
+    CHECK(r.out.empty());
+    CHECK_THAT(r.err,
+               StartsWith("wt: error: git merge failed with exit code 1\n"));
+    CHECK_THAT(r.err, ContainsSubstring("  hook says no\n"));
+    CHECK_THAT(r.err,
+               ContainsSubstring(
+                   "\nmain was restored; no merge remains in progress.\n"));
+    check_main_restored(box, repo, before);
+    CHECK_FALSE(fs::exists(repo / "a.txt"));
+}
+
+TEST_CASE("wt merge reports a merge Git refuses to start") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature");
+    commit_file(box, path, "a.txt", "a\n");
+    commit_file(box, repo, "b.txt", "b\n");
+    git(box, repo, {"config", "merge.ff", "only"});
+    const std::string before = head_of(box, repo);
+
+    auto r = run_wt(box, repo, {"merge", "feature"});
+    CHECK(r.code == 1);
+    CHECK(r.out.empty());
+    CHECK_THAT(r.err,
+               StartsWith("wt: error: git merge failed with exit code "));
+    CHECK_THAT(r.err, ContainsSubstring("\nmain is unchanged.\n"));
+    check_main_restored(box, repo, before);
+}
+
+TEST_CASE("wt merge refuses when main's worktree isn't clean") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature");
+    commit_file(box, path, "a.txt", "a\n");
+    const std::string before = head_of(box, repo);
+
+    SECTION("modified") {
+        write_file(repo / "README", "changed\n");
+    }
+    SECTION("staged") {
+        write_file(repo / "new.txt", "new\n");
+        git(box, repo, {"add", "new.txt"});
+    }
+    SECTION("untracked") {
+        write_file(repo / "new.txt", "new\n");
+    }
+
+    auto r = run_wt(box, repo, {"merge", "feature"});
+    CHECK(r.code == 1);
+    CHECK(r.out.empty());
+    CHECK(r.err == "wt: error: main's worktree at " + repo.string() +
+                       " has uncommitted changes; commit or stash them "
+                       "before merging into main\n");
+    CHECK(head_of(box, repo) == before);
+    CHECK_FALSE(fs::exists(repo / "a.txt"));
+}
+
+TEST_CASE("wt merge refuses when main is in the middle of another merge") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature");
+    commit_file(box, path, "a.txt", "a\n");
+    // A merge whose changes are already resolved can leave the files clean.
+    write_file(repo / ".git" / "MERGE_HEAD", head_of(box, path) + "\n");
+    const std::string before = head_of(box, repo);
+
+    auto r = run_wt(box, repo, {"merge", "feature"});
+    CHECK(r.code == 1);
+    CHECK(r.err == "wt: error: main's worktree at " + repo.string() +
+                       " is in the middle of a merge; finish or abort it "
+                       "first\n");
+    CHECK(head_of(box, repo) == before);
+}
+
+TEST_CASE("wt merge refuses when the task has uncommitted changes") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature");
+    commit_file(box, path, "a.txt", "a\n");
+    write_file(path / "forgotten.txt", "not committed\n");
+    const std::string before = head_of(box, repo);
+
+    auto r = run_wt(box, repo, {"merge", "feature"});
+    CHECK(r.code == 1);
+    CHECK(r.out.empty());
+    CHECK(r.err ==
+          "wt: error: the worktree for 'feature' has uncommitted changes, "
+          "which the merge wouldn't include; commit or stash them first "
+          "(`wt status feature` shows them)\n");
+    CHECK(head_of(box, repo) == before);
+    CHECK(read_file(path / "forgotten.txt") == "not committed\n");
+}
+
+TEST_CASE("wt merge refuses to overwrite ignored files in main's worktree") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    commit_file(box, repo, ".gitignore", ".env\nbuild\n");
+    const fs::path path = wt_new(box, repo, "feature");
+    fs::create_directories(path / "build");
+    write_file(path / ".env", "from the task\n");
+    write_file(path / "build" / "out", "from the task\n");
+    git(box, path, {"add", "-f", ".env", "build/out"});
+    git(box, path, {"commit", "-q", "-m", "track ignored files"});
+    write_file(repo / ".env", "SECRET=mine\n");
+    write_file(repo / "build", "a file where the task has a directory\n");
+    const std::string before = head_of(box, repo);
+
+    auto r = run_wt(box, repo, {"merge", "feature"});
+    CHECK(r.code == 1);
+    CHECK(r.out.empty());
+    CHECK(r.err ==
+          "wt: error: cannot merge feature into main\n"
+          "\n"
+          "Merging would overwrite these ignored files in main's worktree:\n"
+          "- .env\n"
+          "- build\n"
+          "\n"
+          "Move them out of the way first.\n");
+    CHECK(head_of(box, repo) == before);
+    CHECK(read_file(repo / ".env") == "SECRET=mine\n");
+
+    // Ignored files elsewhere don't get in the way.
+    fs::remove(repo / ".env");
+    fs::remove(repo / "build");
+    fs::create_directories(repo / "build");
+    write_file(repo / "build" / "other", "mine\n");
+    r = run_wt(box, repo, {"merge", "feature"});
+    CHECK(r.code == 0);
+    CHECK(read_file(repo / "build" / "other") == "mine\n");
+}
+
+TEST_CASE("wt merge needs main checked out somewhere") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature");
+    commit_file(box, path, "a.txt", "a\n");
+    git(box, repo, {"switch", "-q", "--detach"});
+
+    auto r = run_wt(box, repo, {"merge", "feature"});
+    CHECK(r.code == 1);
+    CHECK(r.err ==
+          "wt: error: the integration branch 'main' isn't checked out in any "
+          "worktree; check it out to merge into it\n");
+    CHECK(git_output(box, repo, {"rev-parse", "main"}) != head_of(box, path));
+}
+
+TEST_CASE("wt merge rejects the integration branch and unknown branches") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+
+    auto r = run_wt(box, repo, {"merge", "main"});
+    CHECK(r.code == 1);
+    CHECK(r.err ==
+          "wt: error: 'main' is the integration branch; there is "
+          "nothing to merge it into\n");
+
+    for (const std::string task : {"nope", "-x", "a..b"}) {
+        r = run_wt(box, repo, {"merge", "--", task});
+        CHECK(r.code == 1);
+        CHECK(r.err == "wt: error: no branch named '" + task + "'\n");
+    }
+}
+
+TEST_CASE("wt merge outside a repository fails with a clear error") {
+    Sandbox box;
+    auto r = run_wt(box, box.work(), {"merge", "feature"});
+    CHECK(r.code == 1);
+    CHECK(r.out.empty());
+    CHECK_THAT(r.err, StartsWith("wt: error: not a git repository"));
+}

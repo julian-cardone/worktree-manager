@@ -15,6 +15,11 @@ If the worktree's directory is replaced by a symlink to another copy of it, Git 
 Git removes the worktree the command runs from, leaving the shell in a deleted directory.
 `wt remove` refuses when the working directory is inside the target worktree.
 
+## `git merge` overwrites ignored files without asking
+
+Git refuses to merge when an untracked file is in the way, but silently replaces an ignored one, e.g. a local `.env` when the merged branch tracks a `.env`.
+`wt merge` refuses when the task's branch adds a file where the destination has an ignored file.
+
 ## Open question: should `wt remove` ever delete the branch?
 
 `wt remove` keeps the task's branch in v1, so cleaning up a merged task still needs a raw `git branch -d`.

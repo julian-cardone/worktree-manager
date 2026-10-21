@@ -3,7 +3,7 @@
 `wt` is a small C++ CLI that takes the friction out of managing Git worktrees when you (and agents like Claude or Codex) are working on several things at once.
 
 > Status: early development.
-> `wt list`, `wt new`, `wt status`, and `wt remove` work; switching worktrees and deleting branches are not implemented yet.
+> `wt list`, `wt new`, `wt status`, `wt merge`, and `wt remove` work; switching worktrees and deleting branches are not implemented yet.
 
 ## Requirements
 
@@ -61,6 +61,7 @@ git ls-files '*.cpp' '*.hpp' | xargs clang-format -i
 | `wt list` | List every worktree of the current repository with its branch, status, and path. |
 | `wt new <task>` | Create branch `<task>` from the integration branch in a new worktree, and print its path. |
 | `wt status <task>` | Summarize the task's worktree: HEAD, uncommitted changes, and commits ahead of or behind the integration branch. |
+| `wt merge <task>` | Merge the task's branch into the integration branch; on a conflict, abort and list the conflicting files. |
 | `wt remove <task>` | Remove the task's worktree if nothing uncommitted would be lost. The branch is kept. |
 
 The version is set by `project(wt VERSION ...)` in `CMakeLists.txt`.
@@ -180,6 +181,48 @@ If there is no integration branch, `wt status` warns and leaves them out.
 If the worktree's directory is gone, the status is `missing` and the change counts are left out; ahead and behind still show, since they only depend on the branch.
 If the status can't be read, `wt status` prints what it can and exits 1.
 It also exits 1 if no worktree has the branch checked out.
+
+### `wt merge <task>`
+
+```
+$ wt merge feature-x
+✓ Merged feature-x into main
+```
+
+Merges branch `<task>` into the integration branch (chosen as for `wt new`) with a normal `git merge`, which fast-forwards when it can.
+The merge happens in the worktree that has the integration branch checked out, usually the main checkout; `wt` never switches a worktree to it.
+It works from the main checkout or any other worktree of the repository, including the task's own.
+The task's worktree and branch are always kept; remove them yourself with `wt remove` and `git branch -d`.
+If the integration branch already has every commit on `<task>`, it says so and does nothing.
+
+**It refuses, and changes nothing, if:**
+
+- the integration branch's worktree has staged, modified, or untracked files, or is in the middle of a merge, cherry-pick, or revert;
+- the task's worktree has uncommitted changes, since the merge wouldn't include them (a task branch with no worktree merges fine);
+- the merge would overwrite ignored files in the integration branch's worktree, i.e. the task's branch adds a file where one is ignored (such as `.env`), which Git would otherwise replace silently;
+- the integration branch isn't checked out in any worktree, or `<task>` is the integration branch.
+
+**On a conflict**, `wt merge` aborts the merge with `git merge --abort`, checks that the integration branch's worktree is back exactly where it was, and lists the conflicting files:
+
+```
+$ wt merge feature-x
+wt: error: merge blocked: feature-x conflicts with main
+
+Conflicts:
+- src/bar.cpp
+- src/foo.cpp
+
+main was restored; no merge remains in progress.
+```
+
+It never resolves conflicts itself.
+To land the task, bring the integration branch into the task (for example `git merge main` in its worktree), resolve the conflicts there, and run `wt merge` again.
+
+The clean-worktree check is what makes the abort safe: `git merge --abort` can only restore a worktree that had no uncommitted changes before the merge.
+If Git stops mid-merge for another reason, such as a hook rejecting the merge commit, `wt merge` aborts the same way and shows Git's output.
+If Git refuses to start the merge (for example, `merge.ff` is `only` and the branches have diverged), it shows Git's output and nothing is changed.
+If the abort or the check after it fails, `wt merge` says what is wrong and where to look with `git status`.
+All failures exit 1.
 
 ### `wt remove <task>`
 

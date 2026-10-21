@@ -30,6 +30,7 @@ target_compile_options(wt_warnings INTERFACE -Wall -Wextra -Wpedantic)
 add_library(wt_core STATIC
   src/commands/app.cpp
   src/commands/list.cpp
+  src/commands/merge.cpp
   src/commands/new.cpp
   src/commands/remove.cpp
   src/commands/status.cpp

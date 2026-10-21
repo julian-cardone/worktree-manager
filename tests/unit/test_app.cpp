@@ -117,3 +117,14 @@ TEST_CASE("remove --help describes the task and --delete-ignored") {
     CHECK_THAT(r.out, ContainsSubstring("task"));
     CHECK_THAT(r.out, ContainsSubstring("--delete-ignored"));
 }
+
+TEST_CASE("help lists the merge command") {
+    auto r = run_wt({"--help"});
+    CHECK_THAT(r.out, ContainsSubstring("merge"));
+}
+
+TEST_CASE("merge --help describes the task argument") {
+    auto r = run_wt({"merge", "--help"});
+    CHECK(r.code == 0);
+    CHECK_THAT(r.out, ContainsSubstring("task"));
+}
