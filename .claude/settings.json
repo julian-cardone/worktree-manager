@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "autoMemoryEnabled": false,
+  "permissions": {
+    "deny": [
+      "Bash(git worktree)",
+      "Bash(git worktree *)",
+      "Bash(git switch *)",
+      "Bash(git checkout *)",
+      "Bash(git branch -d *)",
+      "Bash(git branch -D *)",
+      "Bash(git branch --delete *)",
+      "Bash(git branch -m *)",
+      "Bash(git branch -M *)",
+      "Bash(git branch --move *)",
+      "Bash(gh pr checkout *)",
+      "EnterWorktree",
+      "ExitWorktree",
+      "Edit(//**/.git/**)",
+      "Edit(//**/.git)"
+    ],
+    "allow": [
+      "Bash(git restore --ours *)",
+      "Bash(git restore --theirs *)"
+    ]
+  }
+}

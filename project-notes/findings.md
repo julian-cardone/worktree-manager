@@ -24,3 +24,5 @@ Git refuses to merge when an untracked file is in the way, but silently replaces
 
 `wt remove` keeps the task's branch in v1, so cleaning up a merged task still needs a raw `git branch -d`.
 Whether `wt` should offer branch deletion at all, and with what safeguards, is undecided.
+Squashing or rebasing a task onto `main` makes Git consider its branch unmerged, so `git branch -d` refuses and `-D` is needed even when nothing would be lost.
+Any branch-deletion safeguard based on "merged into the integration branch" would hit the same problem; comparing content (e.g. trees) may be needed instead.
