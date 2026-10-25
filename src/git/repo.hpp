@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -14,6 +15,15 @@ std::filesystem::path common_dir(const std::filesystem::path& dir);
 
 // Reports whether `ref` (a full name, e.g. "refs/heads/main") exists.
 bool ref_exists(const std::filesystem::path& dir, std::string_view ref);
+
+// The commit `name` (e.g. "HEAD", "MERGE_HEAD") resolves to in the worktree at
+// `dir`, or nothing if it doesn't exist there.
+std::optional<std::string> resolve_commit(const std::filesystem::path& dir,
+                                          std::string_view name);
+
+// Reports whether `ancestor` is `commit` or one of its ancestors.
+bool is_ancestor(const std::filesystem::path& dir, std::string_view ancestor,
+                 std::string_view commit);
 
 // Reports whether Git accepts `name` as a branch name, exactly as written.
 bool is_valid_branch_name(const std::filesystem::path& dir,

@@ -148,6 +148,9 @@ If `origin/<task>` exists, `wt` warns but still creates a new local branch from 
 **If Git fails partway**, for example because a `post-checkout` hook exits non-zero after the worktree was created, `wt new` exits 1, shows Git's output, and lists the branch or directory left behind.
 It never removes them itself, but says how: `wt remove <task>` for the worktree, then `git branch -d <task>` for the branch.
 
+**After Git succeeds**, `wt new` checks that Git lists a worktree at the target path with `<task>` checked out, since a `post-checkout` hook could have switched or deleted it.
+If not, it exits 1 with nothing on stdout, says what it found, and removes nothing.
+
 ### `wt status <task>`
 
 ```
@@ -247,6 +250,8 @@ The clean-worktree check is what makes the abort safe: `git merge --abort` can o
 If Git stops mid-merge for another reason, such as a hook rejecting the merge commit, `wt merge` aborts the same way and shows Git's output.
 If Git refuses to start the merge (for example, because of a branch's `mergeOptions`), it shows Git's output and nothing is changed.
 If the abort or the check after it fails, `wt merge` says what is wrong and where to look with `git status`.
+After Git reports success, `wt merge` checks that the integration branch contains the task, and that its worktree is on it, clean, and not mid-operation, since a `post-merge` hook runs after the merge and could undo or add to it.
+If not, it says what is wrong and where to look, and leaves the merge in place.
 All failures exit 1.
 
 ### `wt remove <task>`
@@ -294,13 +299,15 @@ Git itself deletes ignored files (such as `.env` files or build output) with the
 - the worktree you're running it from, including any directory inside it;
 - a locked worktree (`git worktree unlock` it first);
 - a worktree path that is a symlink or a file rather than a directory, since Git would follow a symlink and delete what it points to;
-- a worktree whose status can't be read.
+- a worktree whose status can't be read;
+- a worktree in the middle of a merge, cherry-pick, or revert, even with clean files, since that state is deleted with it.
 
 **If the worktree's directory is already gone**, `wt remove` only removes Git's record of it, and says so.
 This also works if the whole container was deleted.
 Other stale worktrees are left alone, unlike `git worktree prune`.
 
 **If Git fails**, `wt remove` exits 1, shows Git's output, and says whether the worktree's directory is still there.
+After Git reports success, `wt remove` checks that Git no longer lists the worktree and its directory is gone, and exits 1 if not.
 
 ## Project layout
 

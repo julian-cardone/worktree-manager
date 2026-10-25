@@ -45,6 +45,7 @@ Review every command, new or changed, against each of them.
 | Never force by default | No `--force`, hard resets, branch deletion, or similar in normal operation. |
 | Git is the source of truth | Don't keep a second state database that can disagree with Git. |
 | Validate immediately before mutation | Don't rely on state checked much earlier; re-read what the mutation depends on. |
+| Success is verified, not assumed | After mutating, confirm the intended result from Git's and the filesystem's current state; an exit code alone isn't proof (hooks can undo or change Git's work). |
 | Failed operations leave understandable state | Especially `new`, `merge`, and `remove`: say exactly what changed and what was left behind. |
 | The branch survives worktree cleanup | `wt remove` never deletes the branch. |
 | Conflict resolution stays manual | `wt` never guesses how a conflict should be resolved. |
@@ -60,6 +61,7 @@ Review every command, new or changed, against each of them.
 - Use retries only when appropriate; do not mask persistent failures.
 - Add a `WARNING:` comment at any check that upholds an invariant, so it isn't relaxed by accident.
 - Never bypass a `wt` safety check.
+- Structure every consequential command as discover → validate → plan → mutate → verify → report: read and check everything the mutation depends on (Git's view, the filesystem, uncommitted changes, conflicts, in-progress operations) before changing anything.
 
 ## 4. Dogfooding `wt`
 

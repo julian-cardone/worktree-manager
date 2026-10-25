@@ -52,6 +52,32 @@ bool ref_exists(const fs::path& dir, std::string_view ref) {
     throw Error(error_message(r.err));
 }
 
+std::optional<std::string> resolve_commit(const fs::path& dir,
+                                          std::string_view name) {
+    const Result r =
+        run(dir, {"rev-parse", "--verify", "--quiet", std::string(name)});
+    if (r.exit_code == kNotFound) {
+        return std::nullopt;
+    }
+    if (r.exit_code != 0) {
+        throw Error(error_message(r.err));
+    }
+    return first_line(r.out);
+}
+
+bool is_ancestor(const fs::path& dir, std::string_view ancestor,
+                 std::string_view commit) {
+    const Result r = run(dir, {"merge-base", "--is-ancestor",
+                               std::string(ancestor), std::string(commit)});
+    if (r.exit_code == 0) {
+        return true;
+    }
+    if (r.exit_code == kNotFound) {
+        return false;
+    }
+    throw Error(error_message(r.err));
+}
+
 bool is_valid_branch_name(const fs::path& dir, std::string_view name) {
     // check-ref-format has no "--" separator, so a leading '-' would be read
     // as an option.

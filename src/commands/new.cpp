@@ -8,6 +8,7 @@
 #include "ui/format.hpp"
 
 #include <filesystem>
+#include <optional>
 #include <ostream>
 #include <sstream>
 #include <stdexcept>
@@ -109,6 +110,32 @@ void report_failure(const Context& ctx, const git::Result& result,
     ctx.err << '\n';
 }
 
+// Checks, after Git reports success, that it lists a worktree at `target` with
+// `branch` checked out. A post-checkout hook, for one, runs in the new
+// worktree once Git has made it, and can switch it to another branch or
+// delete it. Returns what is wrong, if anything.
+// WARNING: wt prints the path, which scripts `cd` into, only once this passes.
+std::optional<std::string> creation_problem(const Context& ctx,
+                                            const std::string& branch,
+                                            const fs::path& target) {
+    for (const auto& worktree : git::list_worktrees(ctx.cwd)) {
+        if (worktree.path != target) {
+            continue;
+        }
+        if (worktree.branch != branch) {
+            return target.string() + " has " +
+                   (worktree.branch ? "branch " + *worktree.branch
+                                    : std::string("a detached HEAD")) +
+                   " checked out, not " + branch;
+        }
+        if (!path_exists(target)) {
+            return target.string() + " is gone";
+        }
+        return std::nullopt;
+    }
+    return "Git doesn't list a worktree at " + target.string();
+}
+
 }  // namespace
 
 int new_command(const Context& ctx, const std::string& task) {
@@ -154,6 +181,14 @@ int new_command(const Context& ctx, const std::string& task) {
                            target.string(), "refs/heads/" + base});
     if (result.exit_code != 0) {
         report_failure(ctx, result, branch, target);
+        return 1;
+    }
+    // Nothing goes on stdout, so `cd "$(wt new ...)"` can't land somewhere
+    // unexpected.
+    if (auto problem = creation_problem(ctx, branch, target)) {
+        ctx.err << "wt: error: git worktree add reported success, but "
+                << ui::printable(*problem) << '\n'
+                << "wt: nothing was removed; `wt list` shows what is there\n";
         return 1;
     }
 

@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <optional>
 #include <ostream>
 #include <sstream>
 #include <stdexcept>
@@ -117,6 +118,23 @@ void report_failure(const Context& ctx, const git::Result& result,
     }
 }
 
+// Checks, after Git reports success, that it no longer lists the worktree and
+// its directory is gone. Returns what is wrong, if anything.
+// WARNING: wt reports a removal only once this passes.
+std::optional<std::string> removal_problem(const Context& ctx,
+                                           const fs::path& path) {
+    for (const auto& worktree : git::list_worktrees(ctx.cwd)) {
+        if (worktree.path == path) {
+            return "Git still lists it as a worktree";
+        }
+    }
+    std::error_code ec;
+    if (fs::symlink_status(path, ec).type() != fs::file_type::not_found) {
+        return "its directory is still there";
+    }
+    return std::nullopt;
+}
+
 }  // namespace
 
 int remove_command(const Context& ctx, const std::string& task,
@@ -181,6 +199,13 @@ int remove_command(const Context& ctx, const std::string& task,
                 report_blocked(ctx, task, status.changes, !delete_ignored);
                 return 1;
             }
+            // WARNING: its state (e.g. a merge message) lives with the
+            // worktree and would go with it, even when the files are clean.
+            if (auto operation = git::operation_in_progress(worktree.path)) {
+                throw std::runtime_error("the worktree for '" + task +
+                                         "' is in the middle of " + *operation +
+                                         "; finish or abort it first");
+            }
             break;
         }
     }
@@ -192,6 +217,11 @@ int remove_command(const Context& ctx, const std::string& task,
         git::run(ctx.cwd, {"worktree", "remove", "--", worktree.path.string()});
     if (result.exit_code != 0) {
         report_failure(ctx, result, worktree.path);
+        return 1;
+    }
+    if (auto problem = removal_problem(ctx, worktree.path)) {
+        ctx.err << "wt: error: git worktree remove reported success, but "
+                << ui::printable(*problem) << " at " << shown_path << '\n';
         return 1;
     }
 

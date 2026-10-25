@@ -22,40 +22,8 @@ namespace fs = std::filesystem;
 
 namespace {
 
-// rev-parse exits 1 for a name that doesn't resolve.
+// git config exits 1 for a key that isn't set.
 constexpr int kNotFound = 1;
-
-// The commit `name` (e.g. "HEAD", "MERGE_HEAD") resolves to in the worktree at
-// `dir`, or nothing if it doesn't exist there.
-std::optional<std::string> resolve(const fs::path& dir,
-                                   const std::string& name) {
-    const git::Result r =
-        git::run(dir, {"rev-parse", "--verify", "--quiet", name});
-    if (r.exit_code == kNotFound) {
-        return std::nullopt;
-    }
-    if (r.exit_code != 0) {
-        throw git::Error(git::error_message(r.err));
-    }
-    return r.out.substr(0, r.out.find('\n'));
-}
-
-// The operation Git has stopped in the middle of in the worktree at `dir`,
-// e.g. "a merge", or nothing. These can leave the files clean, so a clean
-// status alone doesn't mean it's safe to start a merge.
-std::optional<std::string> operation_in_progress(const fs::path& dir) {
-    const std::pair<const char*, const char*> kOperations[] = {
-        {"MERGE_HEAD", "a merge"},
-        {"CHERRY_PICK_HEAD", "a cherry-pick"},
-        {"REVERT_HEAD", "a revert"},
-    };
-    for (const auto& [ref, what] : kOperations) {
-        if (resolve(dir, ref)) {
-            return what;
-        }
-    }
-    return std::nullopt;
-}
 
 // Reports whether Git is configured to merge only by fast-forwarding, as
 // `git config merge.ff only` does in repositories that keep a linear history.
@@ -118,7 +86,7 @@ void check_destination(const git::Worktree& dest, const std::string& base) {
             throw std::runtime_error("cannot read the status of " + where +
                                      ": " + status.detail);
     }
-    if (auto operation = operation_in_progress(dest.path)) {
+    if (auto operation = git::operation_in_progress(dest.path)) {
         throw std::runtime_error(where + " is in the middle of " + *operation +
                                  "; finish or abort it first");
     }
@@ -213,15 +181,42 @@ std::optional<std::string> abort_merge(const git::Worktree& dest,
     if (r.exit_code != 0) {
         return "git merge --abort failed: " + git::error_message(r.err);
     }
-    if (resolve(dest.path, "MERGE_HEAD")) {
+    if (git::resolve_commit(dest.path, "MERGE_HEAD")) {
         return "a merge is still in progress";
     }
-    if (resolve(dest.path, "HEAD") != before) {
+    if (git::resolve_commit(dest.path, "HEAD") != before) {
         return "HEAD moved from " + before.substr(0, 7);
     }
     const auto status = git::worktree_status(dest);
     if (status.status != git::Status::clean) {
         return "the worktree is " +
+               std::string(git::status_label(status.status));
+    }
+    return std::nullopt;
+}
+
+// Checks, after Git reports a successful merge, that `base` now contains
+// `task_commit` and its worktree is clean and on it. Git's exit code alone
+// doesn't prove that: a post-merge hook, for one, runs after the merge and
+// can undo or add to it. Returns what is wrong, if anything.
+// WARNING: wt reports a merge only once this passes.
+std::optional<std::string> merge_problem(const git::Worktree& dest,
+                                         const std::string& base,
+                                         const std::string& task,
+                                         const std::string& task_commit) {
+    const auto tip = git::resolve_commit(dest.path, "refs/heads/" + base);
+    if (!tip || !git::is_ancestor(dest.path, task_commit, *tip)) {
+        return base + " doesn't contain " + task;
+    }
+    if (git::resolve_commit(dest.path, "HEAD") != tip) {
+        return base + "'s worktree is no longer at " + base;
+    }
+    if (auto operation = git::operation_in_progress(dest.path)) {
+        return base + "'s worktree is in the middle of " + *operation;
+    }
+    const auto status = git::worktree_status(dest);
+    if (status.status != git::Status::clean) {
+        return base + "'s worktree is " +
                std::string(git::status_label(status.status));
     }
     return std::nullopt;
@@ -292,9 +287,15 @@ int merge_command(const Context& ctx, const std::string& task) {
         return 1;
     }
 
-    const auto before = resolve(dest->path, "HEAD");
+    const auto before = git::resolve_commit(dest->path, "HEAD");
     if (!before) {
         throw std::runtime_error("cannot read HEAD in " + dest->path.string());
+    }
+    // What gets merged is checked against this, so a commit added to the task
+    // meanwhile can't make the check fail; it would land too.
+    const auto task_commit = git::resolve_commit(ctx.cwd, "refs/heads/" + task);
+    if (!task_commit) {
+        throw std::runtime_error("cannot read branch '" + task + "'");
     }
     if (const auto in_the_way = ignored_in_the_way(*dest, *before, task);
         !in_the_way.empty()) {
@@ -316,17 +317,27 @@ int merge_command(const Context& ctx, const std::string& task) {
                               "Merge branch '" + task + "' into " + base,
                               "refs/heads/" + task});
     if (result.exit_code == 0) {
+        // Nothing is undone here: the merge did happen, and guessing what
+        // else changed could lose more than it fixes.
+        if (auto problem = merge_problem(*dest, base, task, *task_commit)) {
+            ctx.err << "wt: error: git merge reported success, but "
+                    << ui::printable(*problem) << '\n';
+            print_git_output(ctx, result);
+            ctx.err << "\nInspect " << shown_base << "'s worktree with `git -C "
+                    << ui::printable(dest->path.string()) << " status`.\n";
+            return 1;
+        }
         ctx.out << "✓ Merged " << shown_task << " into " << shown_base << '\n';
         return 0;
     }
 
     // Without MERGE_HEAD, Git refused before merging anything (e.g. an
     // untracked file in the way), so there is nothing to undo.
-    if (!resolve(dest->path, "MERGE_HEAD")) {
+    if (!git::resolve_commit(dest->path, "MERGE_HEAD")) {
         ctx.err << "wt: error: git merge failed with exit code "
                 << result.exit_code << '\n';
         print_git_output(ctx, result);
-        if (resolve(dest->path, "HEAD") == before) {
+        if (git::resolve_commit(dest->path, "HEAD") == before) {
             ctx.err << '\n' << shown_base << " is unchanged.\n";
         }
         return 1;

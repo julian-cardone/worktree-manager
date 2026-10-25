@@ -841,6 +841,32 @@ TEST_CASE("wt new reports what git leaves behind and removes nothing") {
     CHECK(git_output(box, repo, {"branch", "--list", "feature"}).empty());
 }
 
+TEST_CASE("wt new fails when Git succeeds but the worktree isn't the task's") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    // Before the hook, which would also fire for expected_container's probe.
+    const fs::path target = expected_container(box, repo) / "feature";
+    // Runs in the new worktree after Git has made it. The switch runs the
+    // hook again, which must then do nothing.
+    const fs::path hook = repo / ".git" / "hooks" / "post-checkout";
+    write_file(hook,
+               "#!/bin/sh\n[ \"$(git branch --show-current)\" = feature ] || "
+               "exit 0\ngit switch -q -c other\n");
+    fs::permissions(hook, fs::perms::owner_all);
+
+    auto r = run_wt(box, repo, {"new", "feature"});
+    CHECK(r.code == 1);
+    // Nothing for `cd "$(wt new feature)"` to follow.
+    CHECK(r.out.empty());
+    CHECK(r.err == "wt: error: git worktree add reported success, but " +
+                       target.string() +
+                       " has branch other checked out, not feature\n"
+                       "wt: nothing was removed; `wt list` shows what is "
+                       "there\n");
+    // Left as the hook made it, for the user to inspect.
+    CHECK(git_output(box, target, {"branch", "--show-current"}) == "other");
+}
+
 TEST_CASE("wt new works with a bare repository") {
     Sandbox box;
     const fs::path repo = make_repo(box, box.work() / "repo");
@@ -1483,6 +1509,24 @@ TEST_CASE("wt remove refuses a locked worktree") {
     check_untouched(box, repo, path, "feature");
 }
 
+TEST_CASE("wt remove refuses a worktree in the middle of a merge") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature");
+    commit_file(box, repo, "a.txt", "a\n");
+    // "ours" keeps the files as they are, so only MERGE_HEAD shows the merge.
+    git(box, path, {"merge", "-q", "--no-commit", "-s", "ours", "main"});
+    REQUIRE(git_output(box, path, {"status", "--porcelain"}).empty());
+
+    auto r = run_wt(box, repo, {"remove", "feature"});
+    CHECK(r.code == 1);
+    CHECK(r.out.empty());
+    CHECK(r.err ==
+          "wt: error: the worktree for 'feature' is in the middle of a merge; "
+          "finish or abort it first\n");
+    check_untouched(box, repo, path, "feature");
+}
+
 TEST_CASE("wt remove refuses a worktree path that isn't a real directory") {
     Sandbox box;
     const fs::path repo = make_repo(box, box.work() / "repo");
@@ -1767,6 +1811,47 @@ TEST_CASE("wt merge reports a merge Git refuses to start") {
                StartsWith("wt: error: git merge failed with exit code "));
     CHECK_THAT(r.err, ContainsSubstring("\nmain is unchanged.\n"));
     check_main_restored(box, repo, before);
+}
+
+TEST_CASE("wt merge fails when Git succeeds but main lacks the task") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature");
+    commit_file(box, path, "a.txt", "a\n");
+    const std::string before = head_of(box, repo);
+    // Runs after Git has merged, and undoes the fast-forward.
+    const fs::path hook = repo / ".git" / "hooks" / "post-merge";
+    write_file(hook, "#!/bin/sh\ngit reset -q --hard HEAD~1\n");
+    fs::permissions(hook, fs::perms::owner_all);
+
+    auto r = run_wt(box, repo, {"merge", "feature"});
+    CHECK(r.code == 1);
+    CHECK(r.out.empty());
+    CHECK_THAT(r.err, StartsWith("wt: error: git merge reported success, but "
+                                 "main doesn't contain feature\n"));
+    CHECK_THAT(r.err, ContainsSubstring("\nInspect main's worktree with `git "
+                                        "-C " +
+                                        repo.string() + " status`.\n"));
+    CHECK(head_of(box, repo) == before);
+}
+
+TEST_CASE("wt merge fails when Git succeeds but leaves main's worktree dirty") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature");
+    commit_file(box, path, "a.txt", "a\n");
+    const fs::path hook = repo / ".git" / "hooks" / "post-merge";
+    write_file(hook, "#!/bin/sh\necho x > stray.txt\n");
+    fs::permissions(hook, fs::perms::owner_all);
+
+    auto r = run_wt(box, repo, {"merge", "feature"});
+    CHECK(r.code == 1);
+    CHECK(r.out.empty());
+    CHECK_THAT(r.err, StartsWith("wt: error: git merge reported success, but "
+                                 "main's worktree is dirty\n"));
+    // The merge itself happened and is left in place, along with the file.
+    CHECK(head_of(box, repo) == head_of(box, path));
+    CHECK(read_file(repo / "stray.txt") == "x\n");
 }
 
 TEST_CASE("wt merge explains how to land a task when merge.ff is only") {

@@ -70,6 +70,12 @@ std::optional<std::filesystem::path> rebasing_worktree(
     const std::vector<Worktree>& worktrees, const std::filesystem::path& common,
     std::string_view branch);
 
+// The operation Git has stopped in the middle of in the worktree at `dir`,
+// e.g. "a merge", or nothing. These can leave the files clean, so a clean
+// status alone doesn't mean the worktree is idle.
+std::optional<std::string> operation_in_progress(
+    const std::filesystem::path& dir);
+
 // Reports whether the worktree has uncommitted changes, including untracked
 // files, and counts them; with `count_ignored`, also lists ignored files.
 // Never modifies the worktree or its index.

@@ -1,11 +1,13 @@
 #include "git/worktree.hpp"
 
 #include "git/git.hpp"
+#include "git/repo.hpp"
 
 #include <algorithm>
 #include <fstream>
 #include <iterator>
 #include <system_error>
+#include <utility>
 
 namespace wt::git {
 
@@ -234,6 +236,20 @@ std::optional<fs::path> rebasing_worktree(
     }
     if (ec) {
         throw Error("cannot read " + linked.string() + ": " + ec.message());
+    }
+    return std::nullopt;
+}
+
+std::optional<std::string> operation_in_progress(const fs::path& dir) {
+    const std::pair<const char*, const char*> kOperations[] = {
+        {"MERGE_HEAD", "a merge"},
+        {"CHERRY_PICK_HEAD", "a cherry-pick"},
+        {"REVERT_HEAD", "a revert"},
+    };
+    for (const auto& [ref, what] : kOperations) {
+        if (resolve_commit(dir, ref)) {
+            return what;
+        }
     }
     return std::nullopt;
 }
