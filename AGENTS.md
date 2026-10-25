@@ -124,7 +124,7 @@ Only add a **Details** section when something unusual, risky, or non-obvious hap
 
 Do not repeat routine checks or implementation details unless they affect a decision.
 
-If **Decision needed** is `None` and **Worth external review** is `No`, the task does not need additional review before continuing through the normal workflow.
+If **Decision needed** is `None`, **Worth external review** is `No`, and verification found no issues, the task does not need additional review: land it and clean up (`wt merge <task> --cleanup`, following `docs/agent-workflows/landing-tasks.md`) without asking first, then report `LANDED`.
 
 ## 8. Project Notes
 
