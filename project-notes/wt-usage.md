@@ -15,4 +15,4 @@ Only gaps inside `wt`'s product boundary belong here; remove an item once `wt` c
 
 Every task worktree here has an ignored `build/` directory, so `wt remove` and `wt merge --cleanup` refuse until rerun with `--delete-ignored`.
 The refusal is intended, but it makes the flag routine, which weakens it as a guard for ignored files that matter (e.g. `.env`).
-`wt remove` now lists the ignored entries it would delete, so the flag is at least an informed choice; a configurable list of disposable paths was deferred until this proves insufficient.
+`wt remove` and `wt merge --cleanup` now list the ignored entries they would delete, so the flag is at least an informed choice; a configurable list of disposable paths was deferred until this proves insufficient.

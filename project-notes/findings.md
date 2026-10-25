@@ -3,7 +3,7 @@
 ## `git worktree remove` deletes ignored files without asking
 
 Without `--force`, Git refuses to remove a worktree with modified or untracked files, but silently deletes ignored ones (`.env` files, local config, build output).
-`wt remove` counts ignored files and refuses unless `--delete-ignored` is given.
+`wt remove` names the ignored files it would delete and refuses unless `--delete-ignored` is given; `wt merge --cleanup` makes the same check before merging.
 
 ## `git worktree remove` follows a symlink at the worktree path
 
@@ -26,6 +26,12 @@ An explicit `GIT_DIR` is still honored when choosing the repository, and `wt` re
 
 Git refuses to merge when an untracked file is in the way, but silently replaces an ignored one, e.g. a local `.env` when the merged branch tracks a `.env`.
 `wt merge` refuses when the task's branch adds a file where the destination has an ignored file.
+
+## Branch names that differ only in case share ref files
+
+On a case-insensitive filesystem, loose refs are files, so `Fix` and `fix` are one file, and `Fix` and `fix/login` need `refs/heads/Fix` as both a file and a directory.
+Git catches this only by accident: a loose ref or reflog happens to be in the way, but a packed ref with reflogs off (`core.logAllRefUpdates=false`, the default in bare repositories) is not, so Git creates the second branch, and later updates to either then fail or shadow the other.
+When Git reports `core.ignorecase`, `wt new` refuses a branch that equals, contains, or is contained by an existing one ignoring case, and names the existing branch.
 
 ## A branch being rebased looks free and stale
 

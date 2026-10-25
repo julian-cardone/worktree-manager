@@ -17,6 +17,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 namespace wt {
@@ -47,20 +48,46 @@ bool same_ignoring_case(std::string_view a, std::string_view b) {
     });
 }
 
-// A local branch whose name differs from `branch` only in case, or nothing if
-// there's none or `branch` itself exists.
-std::optional<std::string> case_variant_branch(const Context& ctx,
-                                               const std::string& branch) {
-    std::optional<std::string> variant;
+// Whether one name is a directory of the other, e.g. "fix" and "fix/login".
+bool nested(std::string_view a, std::string_view b, bool ignore_case) {
+    if (a.size() > b.size()) {
+        std::swap(a, b);
+    }
+    if (a.size() == b.size() || b[a.size()] != '/') {
+        return false;
+    }
+    const std::string_view prefix = b.substr(0, a.size());
+    return ignore_case ? same_ignoring_case(a, prefix) : a == prefix;
+}
+
+struct CaseConflict {
+    std::string branch;
+    bool nested;  // otherwise the names differ only in case
+};
+
+// An existing local branch that clashes with `branch` only when case is
+// ignored: "Fix" for "fix", or, if `check_nested`, "Fix" for "fix/login" and
+// the reverse. Nothing if `branch` itself exists; clashes that hold with case
+// are left to the checks that report them.
+std::optional<CaseConflict> case_conflict(const Context& ctx,
+                                          const std::string& branch,
+                                          bool check_nested) {
+    std::optional<CaseConflict> conflict;
     for (auto& existing : git::local_branches(ctx.repo)) {
         if (existing == branch) {
             return std::nullopt;
         }
-        if (!variant && same_ignoring_case(existing, branch)) {
-            variant = std::move(existing);
+        if (same_ignoring_case(existing, branch)) {
+            if (!conflict || conflict->nested) {
+                conflict = CaseConflict{std::move(existing), false};
+            }
+        } else if (!conflict && check_nested &&
+                   nested(existing, branch, true) &&
+                   !nested(existing, branch, false)) {
+            conflict = CaseConflict{std::move(existing), true};
         }
     }
-    return variant;
+    return conflict;
 }
 
 // The existing entry the filesystem matched for `target`, with its own
@@ -83,9 +110,9 @@ fs::path existing_entry(const fs::path& target) {
     return ec ? target : variant.value_or(target);
 }
 
-// Fails if `branch` exists, differs only in case from an existing branch
-// where Git treats case as insignificant, or Git couldn't create it next to an
-// existing one.
+// Fails if `branch` exists, Git couldn't create it next to an existing one, or,
+// where Git treats case as insignificant, it would clash with an existing
+// branch when case is ignored.
 // WARNING: wt new never attaches the task to a branch that already exists; its
 // commits may belong to unrelated work.
 void check_branch_free(const Context& ctx,
@@ -93,18 +120,26 @@ void check_branch_free(const Context& ctx,
                        const std::string& branch) {
     const bool exists = git::ref_exists(ctx.repo, "refs/heads/" + branch);
     // On a case-insensitive filesystem, loose refs differing only in case are
-    // the same file, so Git finds "Fix" when only "fix" exists. A packed "fix"
-    // isn't found that way, but creating "Fix" next to it would let either
-    // ref's next loose write shadow the other.
-    // WARNING: refuse case variants however they're stored, so two branches
-    // can never share a ref file.
-    if (exists || git::ignores_case(ctx.repo)) {
-        if (auto existing = case_variant_branch(ctx, branch)) {
-            throw Error(ErrorKind::user,
-                        "task '" + branch +
-                            "' conflicts with existing branch '" + *existing +
-                            "' (names differ only in case); choose another "
-                            "task name");
+    // the same file, so Git finds "Fix" when only "fix" exists. A packed "Fix"
+    // isn't found that way, and without reflogs nothing else stops Git from
+    // creating "fix" or "fix/login" next to it; either ref's next loose write
+    // then shadows the other or fails.
+    // WARNING: refuse these clashes however the existing ref is stored, so two
+    // branches can never share a ref file or directory.
+    const bool ignore_case = git::ignores_case(ctx.repo);
+    if (exists || ignore_case) {
+        if (auto conflict = case_conflict(ctx, branch, ignore_case)) {
+            throw Error(
+                ErrorKind::user,
+                conflict->nested
+                    ? "cannot create branch '" + branch + "' because branch '" +
+                          conflict->branch +
+                          "' exists, and Git can't have both when case is "
+                          "ignored; choose another task name"
+                    : "task '" + branch + "' conflicts with existing branch '" +
+                          conflict->branch +
+                          "' (names differ only in case); choose another task "
+                          "name");
         }
     }
     if (exists) {

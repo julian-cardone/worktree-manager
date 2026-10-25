@@ -873,6 +873,69 @@ TEST_CASE("wt new allows case variants when Git says case matters") {
           "Fix\nfix\nmain");
 }
 
+TEST_CASE("wt new refuses a branch nested under a case variant") {
+    Sandbox box;
+    struct Case {
+        std::string existing;
+        std::string task;
+        bool pack;
+    };
+    for (const Case& c :
+         {Case{"Fix", "fix/login", true}, Case{"Fix", "fix/login", false},
+          Case{"fix/login", "Fix", true}, Case{"fix/login", "Fix", false}}) {
+        INFO("existing: " << c.existing << ", task: " << c.task
+                          << ", packed: " << c.pack);
+        const fs::path parent = box.work() / (c.task + (c.pack ? "-p" : "-l"));
+        const fs::path repo = make_repo(box, parent / "repo");
+        git(box, repo, {"config", "core.ignorecase", "true"});
+        // Without reflogs, Git itself doesn't catch a packed clash.
+        git(box, repo, {"config", "core.logAllRefUpdates", "false"});
+        git(box, repo, {"branch", c.existing});
+        if (c.pack) {
+            git(box, repo, {"pack-refs", "--all"});
+        }
+
+        auto r = run_wt(box, repo, {"new", c.task});
+        CHECK(r.code == 1);
+        CHECK(r.out.empty());
+        CHECK(r.err == "wt: error: cannot create branch '" + c.task +
+                           "' because branch '" + c.existing +
+                           "' exists, and Git can't have both when case is "
+                           "ignored; choose another task name\n");
+        CHECK(git_output(box, repo,
+                         {"for-each-ref", "--format=%(refname:strip=2)",
+                          "refs/heads/"}) == c.existing + "\nmain");
+        CHECK(entries(parent) == std::vector<fs::path>{repo});
+    }
+}
+
+TEST_CASE("wt new leaves nested case variants to Git when case matters") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    git(box, repo, {"config", "core.ignorecase", "false"});
+    // Packed and without reflogs, so a case-insensitive filesystem can hold
+    // both refs too.
+    git(box, repo, {"config", "core.logAllRefUpdates", "false"});
+
+    std::string existing;
+    std::string task;
+    SECTION("existing branch above the task") {
+        existing = "Fix";
+        task = "fix/login";
+    }
+    SECTION("existing branch below the task") {
+        existing = "fix/login";
+        task = "Fix";
+    }
+    git(box, repo, {"branch", existing});
+    git(box, repo, {"pack-refs", "--all"});
+
+    wt_new(box, repo, task);
+    CHECK(git_output(box, repo,
+                     {"for-each-ref", "--format=%(refname:strip=2)",
+                      "refs/heads/"}) == "Fix\nfix/login\nmain");
+}
+
 TEST_CASE("wt new names the folder a task differs from only in case") {
     Sandbox box;
     if (!case_insensitive(box.work())) {
