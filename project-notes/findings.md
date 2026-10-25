@@ -91,6 +91,12 @@ Matching HEAD's commit isn't enough: a hook can point HEAD at another branch, or
 `wt new` used to call whatever existed afterwards "left behind" by Git and suggest `wt remove` and `git branch -d` for it, including a directory that wasn't a worktree at all.
 It now reports the full current state, removes nothing, and suggests cleanup only when the branch is still at the commit `wt` started it from and the path is absent or a worktree with the task's branch checked out.
 
+### A failed check during conflict rollback hid an in-progress merge
+
+`wt merge` listed the conflicting files before running `git merge --abort`, so if listing them failed, the abort never ran and the merge was left in progress behind a bare Git error.
+A failed `MERGE_HEAD` or `HEAD` read after the abort was reported the same way, without saying the merge might remain.
+`wt merge` now aborts even when the conflicts can't be listed, counts any check it can't run as a failed rollback, and when it can't verify the rollback says the integration branch's worktree may still be mid-merge and not to run other `wt` commands until it has been inspected.
+
 ### Ancestry is enough to prove a landed branch is safe to delete
 
 `wt merge` never squashes, so after it lands a task (by fast-forward or merge commit) the task's tip is always an ancestor of the integration branch.

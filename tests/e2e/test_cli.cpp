@@ -2354,11 +2354,164 @@ TEST_CASE(
     CHECK(r.code == 4);
     CHECK(r.out.empty());
     CHECK_THAT(r.err, StartsWith("wt: git error: the merge failed, and wt "
-                                 "could not restore main: main's worktree no "
-                                 "longer has main checked out\n"));
+                                 "could not undo the merge: main's worktree "
+                                 "no longer has main checked out\n"));
     CHECK_THAT(r.err, !ContainsSubstring("was restored"));
     CHECK(git_output(box, repo, {"symbolic-ref", "HEAD"}) ==
           "refs/heads/other");
+}
+
+namespace {
+
+// Commits a.txt with different content on main and on a new task `task`, so
+// merging the task conflicts there.
+void make_conflict(const Sandbox& box, const fs::path& repo,
+                   const std::string& task) {
+    const fs::path path = wt_new(box, repo, task);
+    commit_file(box, path, "a.txt", "task\n");
+    commit_file(box, repo, "a.txt", "main\n");
+}
+
+// Environment that runs wt's git through a shell script that first runs
+// `prelude`, in which "$REAL_GIT" is the real git and wt's arguments are
+// `-C <dir> <args...>`, then the real git.
+Env git_shim(const Sandbox& box, const std::string& prelude) {
+    const fs::path bin = box.root() / "bin";
+    fs::create_directories(bin);
+    write_file(bin / "git", "#!/bin/sh\nREAL_GIT='" + find_on_path("git") +
+                                "'\n" + prelude +
+                                "exec \"$REAL_GIT\" \"$@\"\n");
+    fs::permissions(bin / "git", fs::perms::owner_all);
+    const char* path_env = std::getenv("PATH");
+    return {{"PATH", bin.string() + ":" + (path_env ? path_env : "")}};
+}
+
+}  // namespace
+
+TEST_CASE("wt merge warns that a merge may remain when the abort fails") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    make_conflict(box, repo, "feature");
+    const Env env = git_shim(box,
+                             "if [ \"$3\" = merge ] && [ \"$4\" = --abort ]; "
+                             "then\n"
+                             "  echo 'fatal: abort broke' >&2\n"
+                             "  exit 128\n"
+                             "fi\n");
+
+    auto r = run_wt(box, repo, {"merge", "feature"}, env);
+    CHECK(r.code == 4);
+    CHECK(r.out.empty());
+    CHECK_THAT(r.err,
+               StartsWith("wt: git error: feature conflicts with main, and "
+                          "wt could not undo the merge: git merge --abort "
+                          "failed: abort broke\n"));
+    CHECK_THAT(r.err, ContainsSubstring("\nConflicts:\n- a.txt\n"));
+    CHECK_THAT(r.err,
+               EndsWith("\nmain's worktree may still be in the middle of the "
+                        "merge.\nDon't run other wt commands until you have "
+                        "inspected it with `git -C " +
+                        repo.string() + " status`.\n"));
+    CHECK_THAT(r.err, !ContainsSubstring("restored"));
+    CHECK(fs::exists(repo / ".git" / "MERGE_HEAD"));
+}
+
+TEST_CASE("wt merge still aborts when it cannot list the conflicts") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    make_conflict(box, repo, "feature");
+    const std::string before = head_of(box, repo);
+    const Env env = git_shim(box,
+                             "if [ \"$3\" = diff ] && "
+                             "[ \"$5\" = --diff-filter=U ]; then\n"
+                             "  echo 'fatal: diff broke' >&2\n"
+                             "  exit 128\n"
+                             "fi\n");
+
+    auto r = run_wt(box, repo, {"merge", "feature"}, env);
+    CHECK(r.code == 4);
+    CHECK(r.out.empty());
+    CHECK_THAT(
+        r.err,
+        StartsWith("wt: git error: git merge failed with exit code 1\n"));
+    CHECK_THAT(r.err, ContainsSubstring("CONFLICT"));
+    CHECK_THAT(r.err, ContainsSubstring("\nwt could not list the conflicting "
+                                        "files: diff broke\n"));
+    CHECK_THAT(
+        r.err,
+        EndsWith("\nmain was restored; no merge remains in progress.\n"));
+    check_main_restored(box, repo, before);
+}
+
+TEST_CASE("wt merge doesn't claim a restore it couldn't verify") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    make_conflict(box, repo, "feature");
+    // The abort works, but every rev-parse after it fails.
+    const fs::path aborted = box.root() / "aborted";
+    const Env env =
+        git_shim(box,
+                 "if [ \"$3\" = merge ] && [ \"$4\" = --abort ]; then\n"
+                 "  \"$REAL_GIT\" \"$@\" || exit\n"
+                 "  : > '" +
+                     aborted.string() +
+                     "'\n"
+                     "  exit 0\n"
+                     "fi\n"
+                     "if [ \"$3\" = rev-parse ] && [ -e '" +
+                     aborted.string() +
+                     "' ]; then\n"
+                     "  echo 'fatal: rev-parse broke' >&2\n"
+                     "  exit 128\n"
+                     "fi\n");
+
+    auto r = run_wt(box, repo, {"merge", "feature"}, env);
+    CHECK(r.code == 4);
+    CHECK(r.out.empty());
+    CHECK_THAT(r.err,
+               StartsWith("wt: git error: feature conflicts with main, and "
+                          "wt could not undo the merge: cannot verify the "
+                          "abort: rev-parse broke\n"));
+    CHECK_THAT(r.err, ContainsSubstring("\nConflicts:\n- a.txt\n"));
+    CHECK_THAT(r.err, ContainsSubstring("may still be in the middle of the "
+                                        "merge"));
+    CHECK_THAT(r.err, !ContainsSubstring("restored"));
+}
+
+TEST_CASE("wt merge stops when it cannot tell whether a merge is in progress") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    make_conflict(box, repo, "feature");
+    // The merge conflicts, but every rev-parse after it fails.
+    const fs::path merged = box.root() / "merged";
+    const Env env = git_shim(box,
+                             "if [ \"$3\" = merge ]; then\n"
+                             "  \"$REAL_GIT\" \"$@\"\n"
+                             "  code=$?\n"
+                             "  : > '" +
+                                 merged.string() +
+                                 "'\n"
+                                 "  exit $code\n"
+                                 "fi\n"
+                                 "if [ \"$3\" = rev-parse ] && [ -e '" +
+                                 merged.string() +
+                                 "' ]; then\n"
+                                 "  echo 'fatal: rev-parse broke' >&2\n"
+                                 "  exit 128\n"
+                                 "fi\n");
+
+    auto r = run_wt(box, repo, {"merge", "feature"}, env);
+    CHECK(r.code == 4);
+    CHECK(r.out.empty());
+    CHECK_THAT(r.err,
+               StartsWith("wt: git error: the merge failed, and wt could not "
+                          "tell whether it is still in progress: rev-parse "
+                          "broke\n"));
+    CHECK_THAT(r.err, ContainsSubstring("may still be in the middle of the "
+                                        "merge"));
+    CHECK_THAT(r.err, !ContainsSubstring("restored"));
+    // Unsure, wt left the merge alone rather than abort it.
+    CHECK(fs::exists(repo / ".git" / "MERGE_HEAD"));
 }
 
 TEST_CASE("wt merge reports a merge Git refuses to start") {

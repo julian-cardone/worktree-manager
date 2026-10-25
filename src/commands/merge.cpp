@@ -208,18 +208,28 @@ std::optional<std::string> position_problem(const git::Worktree& dest,
 
 // Aborts the merge in `dest` and checks that it is back on `base` at `before`,
 // clean, with no merge in progress. Returns what is wrong, if anything.
+// WARNING: a check that cannot run counts as failed; wt reports the merge
+// undone only once every check here has passed.
 std::optional<std::string> abort_merge(const git::Worktree& dest,
                                        const std::string& base,
                                        const std::string& before) {
-    const git::Result r = git::run(dest.path, {"merge", "--abort"});
-    if (r.exit_code != 0) {
-        return "git merge --abort failed: " + git::error_message(r.err);
+    try {
+        const git::Result r = git::run(dest.path, {"merge", "--abort"});
+        if (r.exit_code != 0) {
+            return "git merge --abort failed: " + git::error_message(r.err);
+        }
+    } catch (const std::exception& e) {
+        return std::string("git merge --abort failed: ") + e.what();
     }
-    if (git::resolve_commit(dest.path, "MERGE_HEAD")) {
-        return "a merge is still in progress";
-    }
-    if (auto problem = position_problem(dest, base, before)) {
-        return problem;
+    try {
+        if (git::resolve_commit(dest.path, "MERGE_HEAD")) {
+            return "a merge is still in progress";
+        }
+        if (auto problem = position_problem(dest, base, before)) {
+            return problem;
+        }
+    } catch (const std::exception& e) {
+        return std::string("cannot verify the abort: ") + e.what();
     }
     const auto status = git::worktree_status(dest);
     if (status.status != git::Status::clean) {
@@ -265,6 +275,28 @@ void print_git_output(const Context& ctx, const git::Result& result) {
             }
         }
     }
+}
+
+// Explains, on stderr, that a failed merge may still be in progress in
+// `dest`, after `headline` says why. Lists `conflicts`, which may be empty.
+void report_unrestored(const Context& ctx, const std::string& headline,
+                       const git::Result& result,
+                       const std::vector<std::string>& conflicts,
+                       const git::Worktree& dest, const std::string& base) {
+    ctx.err << error_prefix(ErrorKind::git) << ui::printable(headline) << '\n';
+    print_git_output(ctx, result);
+    if (!conflicts.empty()) {
+        ctx.err << "\nConflicts:\n";
+        for (const auto& file : conflicts) {
+            ctx.err << "- " << ui::printable(file) << '\n';
+        }
+    }
+    ctx.err << '\n'
+            << ui::printable(base)
+            << "'s worktree may still be in the middle of the merge.\n"
+            << "Don't run other wt commands until you have inspected it with "
+            << "`git -C " << ui::printable(ui::shell_quote(dest.path.string()))
+            << " status`.\n";
 }
 
 // Explains, on stderr, why the task's worktree and branch are still there
@@ -513,7 +545,20 @@ int land(const Context& ctx, const std::string& task, const std::string& base,
 
     // Without MERGE_HEAD, Git refused before merging anything (e.g. an
     // untracked file in the way), so there is nothing to undo.
-    if (!git::resolve_commit(dest.path, "MERGE_HEAD")) {
+    // WARNING: if that can't be read, neither aborting nor leaving it is
+    // known to be safe, so wt stops and says a merge may remain.
+    bool merging = false;
+    try {
+        merging = git::resolve_commit(dest.path, "MERGE_HEAD").has_value();
+    } catch (const std::exception& e) {
+        report_unrestored(ctx,
+                          "the merge failed, and wt could not tell whether it "
+                          "is still in progress: " +
+                              std::string(e.what()),
+                          result, {}, dest, base);
+        return exit_code(ErrorKind::git);
+    }
+    if (!merging) {
         ctx.err << error_prefix(ErrorKind::git)
                 << "git merge failed with exit code " << result.exit_code
                 << '\n';
@@ -530,27 +575,38 @@ int land(const Context& ctx, const std::string& task, const std::string& base,
         return exit_code(ErrorKind::git);
     }
 
-    const auto conflicts = conflicted_files(dest.path);
+    // Listed before the abort, which clears them. Failing to list them
+    // mustn't stop the abort.
+    std::vector<std::string> conflicts;
+    std::optional<std::string> unlisted;
+    try {
+        conflicts = conflicted_files(dest.path);
+    } catch (const std::exception& e) {
+        unlisted = e.what();
+    }
     if (auto problem = abort_merge(dest, base, *before)) {
-        ctx.err << error_prefix(ErrorKind::git)
-                << "the merge failed, and wt could not restore " << shown_base
-                << ": " << ui::printable(*problem) << '\n';
-        print_git_output(ctx, result);
-        ctx.err << "\nInspect " << shown_base << "'s worktree with `git -C "
-                << ui::printable(ui::shell_quote(dest.path.string()))
-                << " status`.\n";
+        report_unrestored(
+            ctx,
+            (conflicts.empty() ? "the merge failed"
+                               : task + " conflicts with " + base) +
+                ", and wt could not undo the merge: " + *problem,
+            result, conflicts, dest, base);
         return exit_code(ErrorKind::git);
     }
 
     ErrorKind kind = ErrorKind::conflict;
     if (conflicts.empty()) {
         // Git stopped mid-merge without conflicts, e.g. a hook rejected the
-        // merge commit.
+        // merge commit, or the conflicts couldn't be listed.
         kind = ErrorKind::git;
         ctx.err << error_prefix(ErrorKind::git)
                 << "git merge failed with exit code " << result.exit_code
                 << '\n';
         print_git_output(ctx, result);
+        if (unlisted) {
+            ctx.err << "\nwt could not list the conflicting files: "
+                    << ui::printable(*unlisted) << '\n';
+        }
     } else {
         ctx.err << error_prefix(ErrorKind::conflict) << shown_task
                 << " conflicts with " << shown_base << "\n\nConflicts:\n";
