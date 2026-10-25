@@ -1,6 +1,7 @@
 #include "ui/format.hpp"
 
 #include <algorithm>
+#include <cctype>
 
 namespace wt::ui {
 
@@ -15,6 +16,29 @@ std::string printable(std::string_view text) {
         }
     }
     return result;
+}
+
+std::string shell_quote(std::string_view word) {
+    const bool plain =
+        !word.empty() && std::all_of(word.begin(), word.end(), [](char c) {
+            const auto u = static_cast<unsigned char>(c);
+            return std::isalnum(u) || std::string_view("_-./:@%+=,").find(c) !=
+                                          std::string_view::npos;
+        });
+    if (plain) {
+        return std::string(word);
+    }
+    // Nothing is special inside single quotes, so only a quote itself needs
+    // escaping: close the quotes, add an escaped one, and reopen them.
+    std::string quoted = "'";
+    for (const char c : word) {
+        if (c == '\'') {
+            quoted += "'\\''";
+        } else {
+            quoted += c;
+        }
+    }
+    return quoted + "'";
 }
 
 std::string tilde_path(const fs::path& path, const fs::path& home) {

@@ -3,7 +3,7 @@
 `wt` is a small C++ CLI that takes the friction out of managing Git worktrees when you (and agents like Claude or Codex) are working on several things at once.
 
 > Status: early development.
-> `wt list`, `wt new`, `wt status`, `wt merge`, and `wt remove` work; switching worktrees and deleting branches are not implemented yet.
+> `wt list`, `wt new`, `wt status`, `wt merge`, and `wt remove` work; switching worktrees is not implemented yet.
 
 ## Requirements
 
@@ -62,6 +62,7 @@ git ls-files '*.cpp' '*.hpp' | xargs clang-format -i
 | `wt new <task>` | Create branch `<task>` from the integration branch in a new worktree, and print its path. |
 | `wt status <task>` | Summarize the task's worktree: HEAD, uncommitted changes, and commits ahead of or behind the integration branch. |
 | `wt merge <task>` | Merge the task's branch into the integration branch, following Git's merge settings; on a conflict, abort and list the conflicting files. |
+| `wt merge <task> --cleanup` | Merge the task, then remove its worktree and delete its branch once it's proven to have landed. |
 | `wt remove <task>` | Remove the task's worktree if nothing uncommitted would be lost. The branch is kept. |
 
 The version is set by `project(wt VERSION ...)` in `CMakeLists.txt`.
@@ -217,7 +218,7 @@ Merges branch `<task>` into the integration branch (chosen as for `wt new`) with
 `wt` doesn't choose a merge strategy: Git's own settings, such as `merge.ff`, decide whether a merge commit is made.
 The merge happens in the worktree that has the integration branch checked out, usually the main checkout; `wt` never switches a worktree to it.
 It works from the main checkout or any other worktree of the repository, including the task's own.
-The task's worktree and branch are always kept; remove them yourself with `wt remove` and `git branch -d`.
+The task's worktree and branch are kept, unless you pass `--cleanup` (see [below](#cleaning-up-after-landing)).
 If the integration branch already has every commit on `<task>`, it says so and does nothing.
 
 **It refuses, and changes nothing, if:**
@@ -272,6 +273,51 @@ After Git reports success, `wt merge` checks that the integration branch contain
 If not, it says what is wrong and where to look, and leaves the merge in place.
 Refusals exit 2, conflicts 3, and Git failures 4, including a merge Git reported but the check after it didn't find (see [Errors and exit codes](#errors-and-exit-codes)).
 
+#### Cleaning up after landing
+
+```
+$ wt merge feature-x --cleanup
+✓ Merged feature-x into main
+Removed worktree ~/Dev/.worktree-manager.wt-a13f92c4/feature-x
+Deleted branch feature-x (was 3f2a9c1)
+```
+
+`--cleanup` finishes the task once it has landed: it removes the task's worktree, with every check `wt remove` makes, and then deletes the task's local branch.
+`wt remove` itself never deletes a branch; this is the only command that does.
+`--delete-ignored` may be added, with the same meaning as for `wt remove`: it lets ignored files be deleted with the worktree, and never overrides any other check.
+
+**Before merging**, `wt merge --cleanup` also refuses, and changes nothing, if the worktree couldn't be removed afterwards (for example, it has ignored files and `--delete-ignored` wasn't given, or you are running `wt` from inside it), or if the branch has an upstream other than the integration branch that lacks its commits, since `git branch -d` would then refuse to delete it.
+
+**The branch is deleted only once that's proven safe.**
+After the worktree is gone, `wt` reads the state again and refuses unless the branch is checked out nowhere, isn't being rebased, and its current tip is contained in the integration branch.
+It then deletes it with `git branch -d`, never `-D`, so Git checks again that it is merged, and confirms afterwards that the branch is gone.
+A commit added to the branch after it landed, even in the moment between `wt`'s check and Git's, keeps it from being deleted.
+`git branch -d` also removes the branch's configuration, such as its upstream.
+Remote branches, such as `origin/<task>`, are never touched.
+
+**If the task has already landed**, `wt merge --cleanup` finds nothing to merge and goes straight to the cleanup.
+That also deletes branches whose worktrees were removed earlier with `wt remove`.
+
+**If the cleanup fails after landing**, the merge stays, and `wt` says what was left and how to finish:
+
+```
+$ wt merge feature-x --cleanup
+✓ Merged feature-x into main
+wt: refused: cannot remove feature-x
+
+  1 untracked file
+
+Commit, stash, or remove these changes first.
+
+feature-x has landed in main, but the cleanup didn't finish:
+- its worktree is still there (`wt list` shows it)
+- its branch feature-x was kept
+
+Once that's dealt with, finish the cleanup with:
+
+  wt merge feature-x --cleanup
+```
+
 ### `wt remove <task>`
 
 ```
@@ -281,7 +327,7 @@ Kept branch feature-x
 ```
 
 Removes the worktree that has branch `<task>` checked out, using `git worktree remove`.
-The branch and its commits are always kept; delete the branch yourself once it's merged.
+The branch and its commits are always kept; to delete the branch once the task has landed, use `wt merge <task> --cleanup` instead.
 It works from the main checkout or any other worktree of the repository.
 
 **It refuses, and changes nothing, if the worktree has:**

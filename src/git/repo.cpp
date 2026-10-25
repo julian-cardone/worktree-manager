@@ -2,6 +2,7 @@
 
 #include "error.hpp"
 #include "git/git.hpp"
+#include "ui/format.hpp"
 
 #include <charconv>
 #include <system_error>
@@ -209,7 +210,8 @@ std::string integration_branch(const fs::path& dir) {
                 "origin's default branch is '" + name +
                     "', but there is no local branch with that name; "
                     "create it with `git branch " +
-                    name + " origin/" + name +
+                    ui::shell_quote(name) + " " +
+                    ui::shell_quote("origin/" + name) +
                     "`, or choose another with `git config "
                     "wt.integrationBranch <branch>`");
         }

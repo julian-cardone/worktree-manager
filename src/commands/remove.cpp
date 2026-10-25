@@ -14,6 +14,7 @@
 #include <ostream>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <vector>
 
@@ -140,14 +141,11 @@ std::optional<std::string> removal_problem(const Context& ctx,
 
 }  // namespace
 
-int remove_command(const Context& ctx, const std::string& task,
-                   bool delete_ignored) {
-    const auto worktrees = git::list_worktrees(ctx.repo);
-    const git::Worktree& worktree =
-        find_task_worktree(ctx.repo, worktrees, task);
-    const std::string shown_path =
-        ui::printable(ui::tilde_path(worktree.path, ctx.home));
-
+RemovalCheck check_removable(const Context& ctx,
+                             const std::vector<git::Worktree>& worktrees,
+                             const git::Worktree& worktree,
+                             const std::string& task, bool delete_ignored,
+                             std::string_view command) {
     // Git lists the main worktree first; it is the repository itself.
     if (&worktree == &worktrees.front()) {
         throw Error(ErrorKind::refused,
@@ -159,8 +157,8 @@ int remove_command(const Context& ctx, const std::string& task,
     // Removing it would leave the shell (or agent) in a deleted directory.
     if (git::worktree_contains(worktree, ctx.cwd)) {
         throw Error(ErrorKind::refused,
-                    "you are inside the worktree for '" + task +
-                        "'; run wt remove from somewhere else");
+                    "you are inside the worktree for '" + task + "'; run " +
+                        std::string(command) + " from somewhere else");
     }
     // Git would follow a symlink here and delete the files it points to.
     std::error_code ec;
@@ -182,7 +180,7 @@ int remove_command(const Context& ctx, const std::string& task,
                     "the worktree for '" + task +
                         "' is locked; if it's no longer needed, unlock it with "
                         "`git worktree unlock " +
-                        worktree.path.string() + "`");
+                        ui::shell_quote(worktree.path.string()) + "`");
     }
 
     const auto status = git::worktree_status(worktree, /*count_ignored=*/true);
@@ -192,30 +190,34 @@ int remove_command(const Context& ctx, const std::string& task,
                         "cannot read the status of " + worktree.path.string() +
                             ": " + status.detail + "; not removing it");
         case git::Status::missing:
-            break;
+            return {.allowed = true, .missing = true};
         case git::Status::bare:
             // Only the main worktree can be bare, and it was refused above.
             throw Error(ErrorKind::internal, "cannot remove a bare repository");
         case git::Status::clean:
-        case git::Status::dirty: {
-            const bool ignored_block =
-                !status.changes.ignored.empty() && !delete_ignored;
-            if (!status.changes.empty() || ignored_block) {
-                report_blocked(ctx, task, status.changes, !delete_ignored);
-                return exit_code(ErrorKind::refused);
-            }
-            // WARNING: its state (e.g. a merge message) lives with the
-            // worktree and would go with it, even when the files are clean.
-            if (auto operation = git::operation_in_progress(worktree.path)) {
-                throw Error(ErrorKind::refused,
-                            "the worktree for '" + task +
-                                "' is in the middle of " + *operation +
-                                "; finish or abort it first");
-            }
+        case git::Status::dirty:
             break;
-        }
     }
+    const bool ignored_block =
+        !status.changes.ignored.empty() && !delete_ignored;
+    if (!status.changes.empty() || ignored_block) {
+        report_blocked(ctx, task, status.changes, !delete_ignored);
+        return {.allowed = false, .missing = false};
+    }
+    // WARNING: its state (e.g. a merge message) lives with the worktree and
+    // would go with it, even when the files are clean.
+    if (auto operation = git::operation_in_progress(worktree.path)) {
+        throw Error(ErrorKind::refused,
+                    "the worktree for '" + task + "' is in the middle of " +
+                        *operation + "; finish or abort it first");
+    }
+    return {.allowed = true, .missing = false};
+}
 
+int remove_worktree(const Context& ctx, const git::Worktree& worktree,
+                    const RemovalCheck& check) {
+    const std::string shown_path =
+        ui::printable(ui::tilde_path(worktree.path, ctx.home));
     // WARNING: never pass --force. Git's own check for modified and untracked
     // files is the last line of defense if something changed since ours.
     // "--" and the absolute path keep the path from being read as an option.
@@ -234,11 +236,27 @@ int remove_command(const Context& ctx, const std::string& task,
         return exit_code(ErrorKind::git);
     }
 
-    if (status.status == git::Status::missing) {
+    if (check.missing) {
         ctx.out << "Worktree " << shown_path
                 << " was already gone; removed Git's record of it\n";
     } else {
         ctx.out << "Removed worktree " << shown_path << '\n';
+    }
+    return 0;
+}
+
+int remove_command(const Context& ctx, const std::string& task,
+                   bool delete_ignored) {
+    const auto worktrees = git::list_worktrees(ctx.repo);
+    const git::Worktree& worktree =
+        find_task_worktree(ctx.repo, worktrees, task);
+    const auto check = check_removable(ctx, worktrees, worktree, task,
+                                       delete_ignored, "wt remove");
+    if (!check.allowed) {
+        return exit_code(ErrorKind::refused);
+    }
+    if (const int code = remove_worktree(ctx, worktree, check); code != 0) {
+        return code;
     }
     ctx.out << "Kept branch " << ui::printable(task) << '\n';
     return 0;

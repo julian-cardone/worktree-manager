@@ -123,8 +123,10 @@ TEST_CASE("help lists the merge command") {
     CHECK_THAT(r.out, ContainsSubstring("merge"));
 }
 
-TEST_CASE("merge --help describes the task argument") {
+TEST_CASE("merge --help describes the task, --cleanup, and --delete-ignored") {
     auto r = run_wt({"merge", "--help"});
     CHECK(r.code == 0);
     CHECK_THAT(r.out, ContainsSubstring("task"));
+    CHECK_THAT(r.out, ContainsSubstring("--cleanup"));
+    CHECK_THAT(r.out, ContainsSubstring("--delete-ignored"));
 }

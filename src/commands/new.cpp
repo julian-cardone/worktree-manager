@@ -102,12 +102,12 @@ void report_failure(const Context& ctx, const git::Result& result,
             << (branch_left && path_left ? "them" : "it") << ", ";
     if (path_left) {
         ctx.err << "remove the worktree with `wt remove "
-                << ui::printable(branch) << '`';
+                << ui::printable(ui::shell_quote(branch)) << '`';
     }
     if (branch_left) {
         ctx.err << (path_left ? ", then " : "")
                 << "delete the branch with `git branch -d "
-                << ui::printable(branch) << '`';
+                << ui::printable(ui::shell_quote(branch)) << '`';
     }
     ctx.err << '\n';
 }

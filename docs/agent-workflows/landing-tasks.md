@@ -48,13 +48,14 @@ Do these steps before reporting a task complete, not only right before `wt merge
 
 ## Land the Task
 
-From any worktree in the repository:
+From any worktree in the repository other than the task's own (for example, the main checkout):
 
 ```bash
-wt merge <task>
+wt merge <task> --cleanup
 ```
 
-`wt merge` should fast-forward the integration branch. If it refuses because the task is behind `main`, return to the task worktree, rebase onto the latest `main`, rerun the relevant verification, and try again.
+`wt merge` should fast-forward the integration branch, then `--cleanup` removes the task's worktree and deletes its branch.
+Run it from outside the task's worktree: `--cleanup` refuses, before merging anything, to remove the worktree it is run from. If it refuses because the task is behind `main`, return to the task worktree, rebase onto the latest `main`, rerun the relevant verification, and try again.
 
 Never merge `main` into the task branch as a conflict-resolution strategy. That creates backwards-looking merge history when the task later fast-forwards into `main`.
 
@@ -68,19 +69,17 @@ Passing a branch name can check that branch out in the current worktree. Run `gi
 
 ## Cleanup
 
-Only after `wt merge <task>` succeeds:
+`--cleanup` checks, before merging, that the worktree can be removed afterwards.
+If ignored files such as `build/` are present, it refuses and lists them; inspect them before explicitly allowing their deletion:
 
 ```bash
-wt remove <task>
+wt merge <task> --cleanup --delete-ignored
 ```
 
-If ignored files such as `build/` are present, inspect the files reported by `wt remove` before explicitly allowing their deletion:
+If the cleanup fails after the task has landed, `wt merge` says what was left behind.
+Deal with that, then rerun the command it prints; the task has already landed, so the rerun only cleans up.
 
-```bash
-wt remove <task> --delete-ignored
-```
-
-`wt remove` keeps the task branch. Merged task branches currently accumulate until a human deletes them; this is known non-blocking cleanup friction.
+Never delete a task branch with `git branch`. To clean up a task branch that has already landed, even one whose worktree is gone, run `wt merge <task> --cleanup`.
 
 ## Parallel Tasks
 
@@ -91,7 +90,6 @@ As tasks finish:
 1. Rebase each finished task onto the latest `main`.
 2. Resolve conflicts and review behavioral changes in that task's worktree.
 3. Rerun relevant tests.
-4. Land it with `wt merge <task>`.
-5. Remove its worktree with `wt remove <task>`.
+4. Land and clean it up with `wt merge <task> --cleanup`.
 
 A task that remains open while other tasks land will eventually be behind `main`; this is expected.

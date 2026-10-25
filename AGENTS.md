@@ -46,7 +46,7 @@ These must always hold. Review every command, new or changed, against each of th
 | Validate immediately before mutation | Re-read the state the mutation depends on instead of relying on earlier checks. |
 | Success is verified, not assumed | After mutating, confirm the intended result from Git and the filesystem; an exit code alone is not proof. |
 | Failed operations leave understandable state | Especially for `new`, `merge`, and `remove`, explain what changed and what was left behind. |
-| The branch survives worktree cleanup | `wt remove` never deletes the branch. |
+| Only proven-landed branches are deleted | `wt remove` never deletes branches. Only `wt merge --cleanup` may delete the task branch, after proving it is contained in the integration branch, and only with `git branch -d`. |
 | Conflict resolution stays manual | `wt` never guesses how a conflict should be resolved. |
 | Unknown state means stop | Never treat uncertainty as safety. |
 | User input never becomes shell syntax | Pass arguments as argv, never through a shell; quote commands printed for users to paste. |
@@ -70,7 +70,7 @@ All development on this repository must exercise `wt` as the intended worktree w
 - Do not use Git directly to:
   - create, remove, prune, move, lock, or otherwise manage worktrees;
   - switch or check out a different branch for a worktree;
-  - delete or rename task branches;
+  - delete or rename task branches (`wt merge --cleanup` deletes landed ones);
   - merge a task branch into the integration branch.
 - General Git operations outside the `wt` product boundary are allowed, including `git status`, `git diff`, `git log`, `git add`, `git commit`, `git rebase`, and `git restore`.
 - Use `git restore` for file-level restoration and conflict resolution; do not use `git checkout`.

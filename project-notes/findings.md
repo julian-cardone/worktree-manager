@@ -46,9 +46,9 @@ Hooks run after Git has done its work and can undo or change it without Git fail
 `wt` used to report success on exit code 0 alone, so `wt merge` printed "✓ Merged" for a task `main` didn't contain, and `wt new` printed the path of a worktree on the wrong branch.
 `wt new`, `wt merge`, and `wt remove` now confirm the result from Git's and the filesystem's current state before reporting success (see `AGENTS.md` section 3).
 
-## Open question: should `wt remove` ever delete the branch?
+## Ancestry is enough to prove a landed branch is safe to delete
 
-`wt remove` keeps the task's branch in v1, so cleaning up a merged task still needs a raw `git branch -d`.
-Whether `wt` should offer branch deletion at all, and with what safeguards, is undecided.
-Squashing or rebasing a task onto `main` makes Git consider its branch unmerged, so `git branch -d` refuses and `-D` is needed even when nothing would be lost.
-Any branch-deletion safeguard based on "merged into the integration branch" would hit the same problem; comparing content (e.g. trees) may be needed instead.
+`wt merge` never squashes, so after it lands a task (by fast-forward or merge commit) the task's tip is always an ancestor of the integration branch.
+`wt merge --cleanup` relies on that: it deletes the branch only when its current tip is contained in the integration branch, then lets `git branch -d` check again, so a branch moved in between is kept.
+Squashed or cherry-picked branches landed outside `wt` fail the check and are kept; comparing content to delete those is deliberately not done.
+`git branch -d` also checks against the branch's upstream when one exists, so `--cleanup` refuses up front when an upstream other than the integration branch lacks the task's commits.
