@@ -66,6 +66,9 @@ git ls-files '*.cpp' '*.hpp' | xargs clang-format -i
 
 The version is set by `project(wt VERSION ...)` in `CMakeLists.txt`.
 
+`wt` always works on the repository containing the current directory.
+It ignores variables that would point Git at another repository, such as `GIT_DIR`, `GIT_WORK_TREE`, and `GIT_INDEX_FILE`, so it behaves the same when run from a Git hook, `git rebase --exec`, or a `!` alias.
+
 ### `wt list`
 
 Works from the main checkout or any linked worktree, and always lists the main worktree first.

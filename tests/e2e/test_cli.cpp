@@ -52,8 +52,11 @@ void write_file(const fs::path& path, const std::string& content) {
 // the sandbox so user config and repositories outside it are never touched.
 // Inherited GIT_* variables are dropped: GIT_DIR or GIT_WORK_TREE (set, e.g.,
 // when tests run from a Git hook) would point git at a real repository.
-std::vector<std::string> sandbox_env(const Sandbox& box) {
-    const std::vector<std::pair<std::string, std::string>> overrides = {
+// `extra` adds variables on top, and must only point inside the sandbox.
+using Env = std::vector<std::pair<std::string, std::string>>;
+
+std::vector<std::string> sandbox_env(const Sandbox& box, const Env& extra) {
+    Env overrides = {
         {"HOME", box.home().string()},
         {"XDG_CONFIG_HOME", (box.home() / ".config").string()},
         {"GIT_CONFIG_NOSYSTEM", "1"},
@@ -63,6 +66,7 @@ std::vector<std::string> sandbox_env(const Sandbox& box) {
         {"GIT_COMMITTER_NAME", "wt test"},
         {"GIT_COMMITTER_EMAIL", "wt-test@example.invalid"},
     };
+    overrides.insert(overrides.end(), extra.begin(), extra.end());
 
     std::vector<std::string> env;
     for (char** e = environ; *e != nullptr; ++e) {
@@ -103,7 +107,8 @@ std::string find_on_path(const std::string& name) {
 // code. Arguments are passed straight to execve, so no shell quoting is
 // involved.
 Result run_in(const Sandbox& box, const fs::path& dir,
-              std::vector<std::string> argv_storage) {
+              std::vector<std::string> argv_storage,
+              const Env& extra_env = {}) {
     const std::string out_path = (box.root() / "stdout").string();
     const std::string err_path = (box.root() / "stderr").string();
     const std::string work_dir = dir.string();
@@ -114,7 +119,7 @@ Result run_in(const Sandbox& box, const fs::path& dir,
     }
     argv.push_back(nullptr);
 
-    std::vector<std::string> env_storage = sandbox_env(box);
+    std::vector<std::string> env_storage = sandbox_env(box, extra_env);
     std::vector<char*> envp;
     for (auto& e : env_storage) {
         envp.push_back(e.data());
@@ -148,10 +153,11 @@ Result run_in(const Sandbox& box, const fs::path& dir,
 }
 
 Result run_wt(const Sandbox& box, const fs::path& dir,
-              std::initializer_list<std::string> args) {
+              std::initializer_list<std::string> args,
+              const Env& extra_env = {}) {
     std::vector<std::string> argv = {WT_BINARY_PATH};
     argv.insert(argv.end(), args);
-    return run_in(box, dir, std::move(argv));
+    return run_in(box, dir, std::move(argv), extra_env);
 }
 
 // Runs `wt <args>` in the work directory of a fresh sandbox.
@@ -1318,6 +1324,36 @@ TEST_CASE("wt remove refuses ignored files unless told to delete them") {
         CHECK_FALSE(fs::exists(path));
         CHECK_FALSE(registered(box, repo, path));
     }
+}
+
+TEST_CASE("wt checks the task worktree even when GIT_DIR points elsewhere") {
+    // Git exports these to hooks, `git rebase --exec` commands, and `!`
+    // aliases. They override `git -C`, so wt's checks would read the main
+    // checkout instead of the task's worktree.
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    write_file(repo / ".gitignore", "*.env\n");
+    git(box, repo, {"add", ".gitignore"});
+    git(box, repo, {"commit", "-q", "-m", "ignore"});
+    const fs::path path = wt_new(box, repo, "feature");
+    write_file(path / "secret.env", "token\n");
+    write_file(path / "new.txt", "new\n");
+    const Env hook_env = {
+        {"GIT_DIR", (repo / ".git").string()},
+        {"GIT_WORK_TREE", repo.string()},
+        {"GIT_INDEX_FILE", (repo / ".git" / "index").string()},
+    };
+
+    auto r = run_wt(box, repo, {"status", "feature"}, hook_env);
+    CHECK(r.code == 0);
+    CHECK(field(r.out, "Untracked:") == "Untracked:    1");
+
+    fs::remove(path / "new.txt");
+    r = run_wt(box, repo, {"remove", "feature"}, hook_env);
+    CHECK(r.code == 1);
+    CHECK_THAT(r.err, ContainsSubstring("1 ignored file\n    secret.env\n"));
+    CHECK(read_file(path / "secret.env") == "token\n");
+    check_untouched(box, repo, path, "feature");
 }
 
 TEST_CASE("wt remove cleans up a worktree whose directory is gone") {

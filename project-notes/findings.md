@@ -15,6 +15,12 @@ If the worktree's directory is replaced by a symlink to another copy of it, Git 
 Git removes the worktree the command runs from, leaving the shell in a deleted directory.
 `wt remove` refuses when the working directory is inside the target worktree.
 
+## Inherited `GIT_DIR` silently redirects every check
+
+Git exports `GIT_DIR`, `GIT_WORK_TREE`, and `GIT_INDEX_FILE` to hooks, `git rebase --exec` commands, and `!` aliases, and they override `git -C`.
+`wt` run from there checked the main checkout instead of the task's worktree, so `wt status` called a dirty worktree clean and `wt remove` deleted its ignored files without asking.
+`git::run` now drops Git's per-repository variables (`git rev-parse --local-env-vars`, minus the config ones) before running Git.
+
 ## `git merge` overwrites ignored files without asking
 
 Git refuses to merge when an untracked file is in the way, but silently replaces an ignored one, e.g. a local `.env` when the merged branch tracks a `.env`.

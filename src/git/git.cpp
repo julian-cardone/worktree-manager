@@ -6,9 +6,11 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cstring>
+#include <string_view>
 #include <system_error>
 #include <utility>
 
@@ -103,6 +105,43 @@ void drain(int out_fd, int err_fd, std::string& out, std::string& err) {
     }
 }
 
+// Variables that tell git which repository, worktree, or index to use. They
+// override `-C`, so one inherited from a hook, `git rebase --exec`, or a `!`
+// alias would point every safety check at the wrong worktree; for example,
+// `wt remove` could then delete a worktree's ignored files without asking.
+// This is `git rev-parse --local-env-vars` (what git clears before entering a
+// submodule), minus the config variables, which carry the user's `-c`
+// settings rather than a location.
+constexpr std::string_view kRepoEnvVars[] = {
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_COMMON_DIR",
+    "GIT_DIR",
+    "GIT_GRAFT_FILE",
+    "GIT_IMPLICIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_NO_REPLACE_OBJECTS",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_PREFIX",
+    "GIT_REPLACE_REF_BASE",
+    "GIT_SHALLOW_FILE",
+    "GIT_WORK_TREE",
+};
+
+// The environment for git: ours, minus kRepoEnvVars, so `-C` alone decides
+// which repository git works on.
+std::vector<char*> git_environment() {
+    std::vector<char*> env;
+    for (char** e = environ; *e != nullptr; ++e) {
+        const std::string_view entry(*e);
+        const std::string_view name = entry.substr(0, entry.find('='));
+        if (std::ranges::find(kRepoEnvVars, name) == std::end(kRepoEnvVars)) {
+            env.push_back(*e);
+        }
+    }
+    env.push_back(nullptr);
+    return env;
+}
+
 int wait_for(pid_t pid) {
     int status = 0;
     while (::waitpid(pid, &status, 0) < 0) {
@@ -127,6 +166,7 @@ Result run(const std::filesystem::path& dir,
         argv.push_back(a.data());
     }
     argv.push_back(nullptr);
+    std::vector<char*> envp = git_environment();
 
     int out_fds[2];
     make_pipe(out_fds);
@@ -149,7 +189,7 @@ Result run(const std::filesystem::path& dir,
                   actions.get(), err_pipe.write.get(), STDERR_FILENO),
               "spawn");
         const int rc = ::posix_spawnp(&pid, "git", actions.get(), nullptr,
-                                      argv.data(), environ);
+                                      argv.data(), envp.data());
         if (rc == ENOENT) {
             throw Error("git was not found on PATH; install Git to use wt");
         }

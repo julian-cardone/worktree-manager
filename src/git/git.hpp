@@ -21,7 +21,9 @@ public:
 };
 
 // Runs `git -C <dir> <args...>` and captures its output. Arguments are passed
-// straight to exec, never through a shell. Throws Error if git can't be run.
+// straight to exec, never through a shell. Inherited variables that would
+// point git at another repository (GIT_DIR, GIT_WORK_TREE, ...) are dropped,
+// so `dir` alone decides. Throws Error if git can't be run.
 Result run(const std::filesystem::path& dir,
            const std::vector<std::string>& args);
 
