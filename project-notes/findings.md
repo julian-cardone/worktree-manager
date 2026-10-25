@@ -36,7 +36,7 @@ Not covered: a branch moved by another branch's `git rebase --update-refs`, whic
 ## Merging `main` into a task makes `main`'s history run backwards
 
 When a task has merged `main` in, landing it fast-forwards, so `main`'s first-parent history goes through "Merge branch 'main' into …".
-`wt` follows Git's merge settings rather than picking a strategy; this repository uses `merge.ff=only` and rebases tasks (see `AGENTS.md`).
+`wt` follows Git's merge settings rather than picking a strategy; this repository uses `merge.ff=only` and rebases tasks (see `docs/agent-workflows/landing-tasks.md`).
 `wt merge` explains the rebase step when `merge.ff=only` blocks a task that is behind.
 
 ## Git's exit code doesn't prove the operation happened

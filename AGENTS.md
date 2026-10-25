@@ -74,13 +74,13 @@ All development on this repository must exercise `wt` as the intended worktree w
   - merge a task branch into the integration branch.
 - General Git operations outside the `wt` product boundary are allowed, including `git status`, `git diff`, `git log`, `git add`, `git commit`, `git rebase`, and `git restore`.
 - Use `git restore` for file-level restoration and conflict resolution; do not use `git checkout`.
-- If `wt` is broken, unsafe, or lacks a required lifecycle capability, stop and report the limitation instead of bypassing it.
-- Friction in general Git workflows is not by itself a reason to add a `wt` command.
+- If `wt` is broken, unsafe, or lacks a required lifecycle capability, stop and report the limitation instead of bypassing it. Keep the missing-capabilities section of `project-notes/wt-usage.md` current as gaps are found or resolved.
+- Friction in general Git workflows is not by itself a reason to add a `wt` command. Only propose new `wt` commands that fit the product boundary above.
 - Record meaningful `wt` friction in `project-notes/wt-usage.md`.
 - Record significant product, architecture, safety, reliability, performance, or usability findings in `project-notes/findings.md`, and surface important findings when discovered.
 - Do not log routine successful commands or generate unnecessary noise.
 
-This repository keeps `main` linear. Before landing a task, follow `docs/agent-workflows/landing-tasks.md`.
+This repository keeps `main` linear. Before reporting a task complete or landing it, follow `docs/agent-workflows/landing-tasks.md`.
 
 ## 5. Code Quality & Documentation
 

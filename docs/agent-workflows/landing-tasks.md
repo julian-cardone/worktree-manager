@@ -4,9 +4,11 @@ This repository keeps `main` linear. Every task must land as a fast-forward with
 
 This is a repository policy only. `wt` itself follows each repository's Git settings and must not impose this strategy on other users.
 
-## Before Landing
+## Before Reporting Complete or Landing
 
-1. Keep the task's worktree until the task has successfully landed.
+Do these steps before reporting a task complete, not only right before `wt merge`; a task that was finished against an older `main` is not finished.
+
+1. Keep the task's worktree until the task has successfully landed. `wt` can't currently create a worktree for an existing task branch, so a task removed early can't be rebased.
 2. Confirm the repository still uses fast-forward-only merges:
 
    ```bash
@@ -17,6 +19,12 @@ This is a repository policy only. `wt` itself follows each repository's Git sett
 
    ```text
    only
+   ```
+
+   If it is missing, restore it before landing:
+
+   ```bash
+   git config merge.ff only
    ```
 
 3. Rebase the task branch onto the latest `main` from inside the task's own worktree:

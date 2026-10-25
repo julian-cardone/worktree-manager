@@ -11,7 +11,7 @@ Only gaps inside `wt`'s product boundary belong here; remove an item once `wt` c
   This is cleanup friction, not a correctness problem, and doesn't block using `wt`.
   Cleanup needs a human running `git branch -d`; whether `wt` should do this, and with what safeguards, is an open question in `findings.md`.
 - **Give an existing branch a worktree**: `wt new` only creates new branches, so a task whose worktree was removed before it landed can't be rebased onto `main` through `wt`.
-  Deliberately not solved yet: the workflow keeps a task's worktree until it lands (`AGENTS.md`).
+  Deliberately not solved yet: the workflow keeps a task's worktree until it lands (`docs/agent-workflows/landing-tasks.md`).
   If removing a worktree too early happens repeatedly, that justifies something like `wt attach <branch>` or extending `wt new`; note each occurrence here.
 
 ## Build directories always need `--delete-ignored`
