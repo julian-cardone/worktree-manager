@@ -2142,6 +2142,30 @@ TEST_CASE("wt remove refuses the worktree it's run from") {
     CHECK_FALSE(fs::exists(path));
 }
 
+// On macOS, Git precomposes the Unicode in the path wt gives it, so the
+// worktree it lists can differ in bytes from the folder on disk.
+TEST_CASE("wt manages worktrees under a decomposed Unicode folder name") {
+    Sandbox box;
+    const fs::path parent =
+        box.work() / "cafe\xcc\x81";  // e + combining accent
+    const fs::path repo = make_repo(box, parent / "re\xcc\x81po");
+    const fs::path path = wt_new(box, repo, "feature");
+    CHECK(fs::is_regular_file(path / "README"));
+    CHECK(git_output(box, path, {"branch", "--show-current"}) == "feature");
+
+    auto r = run_wt(box, path, {"remove", "feature"});
+    CHECK(r.code == 2);
+    CHECK(r.err ==
+          "wt: refused: you are inside the worktree for 'feature'; run wt "
+          "remove from somewhere else\n");
+    CHECK(fs::is_regular_file(path / "README"));
+
+    r = run_wt(box, repo, {"remove", "feature"});
+    INFO("wt stderr: " << r.err);
+    CHECK(r.code == 0);
+    CHECK_FALSE(fs::exists(path));
+}
+
 TEST_CASE("wt remove refuses a locked worktree") {
     Sandbox box;
     const fs::path repo = make_repo(box, box.work() / "repo");

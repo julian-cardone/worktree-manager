@@ -136,6 +136,28 @@ TEST_CASE("worktree_contains matches the worktree and paths inside it") {
     CHECK_FALSE(worktree_contains(worktree, "/code/.repo.wt-1/feature/../b"));
 }
 
+TEST_CASE("same_path ignores how Git and macOS spell Unicode") {
+    using wt::git::same_path;
+    const std::string nfc = "/code/caf\xc3\xa9/repo";   // é as one code point
+    const std::string nfd = "/code/cafe\xcc\x81/repo";  // e + combining accent
+    CHECK(same_path("/code/repo", "/code/repo"));
+    CHECK_FALSE(same_path("/code/repo", "/code/Repo"));
+    CHECK_FALSE(same_path("/code/repo", "/code/repo/.."));
+    CHECK(same_path(nfc, nfc));
+    // Only macOS treats the two forms as one name, and only there does Git
+    // rewrite one into the other.
+#if defined(__APPLE__)
+    CHECK(same_path(nfc, nfd));
+    CHECK(wt::git::worktree_contains({.path = nfc}, nfd + "/src"));
+    CHECK(wt::git::worktree_contains({.path = nfd}, nfc));
+#else
+    CHECK_FALSE(same_path(nfc, nfd));
+#endif
+    // Invalid UTF-8 is compared as is.
+    CHECK(same_path("/code/\xff", "/code/\xff"));
+    CHECK_FALSE(same_path("/code/\xff", "/code/\xfe"));
+}
+
 TEST_CASE("parse_status counts nothing for a clean worktree") {
     CHECK(wt::git::parse_status("").empty());
 }

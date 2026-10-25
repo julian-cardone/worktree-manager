@@ -48,6 +48,12 @@ target_link_libraries(wt_core
   PUBLIC CLI11::CLI11
   PRIVATE wt_warnings)
 
+# Paths are compared after precomposing their Unicode as Git does on macOS.
+if(APPLE)
+  find_package(Iconv REQUIRED)
+  target_link_libraries(wt_core PRIVATE Iconv::Iconv)
+endif()
+
 # ---------------------------------------------------------------------------
 # wt executable -> build/wt
 # ---------------------------------------------------------------------------

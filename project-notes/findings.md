@@ -58,6 +58,13 @@ Git exports `GIT_DIR`, `GIT_WORK_TREE`, and `GIT_INDEX_FILE` to hooks, `git reba
 `git::run` now drops Git's per-repository variables (`git rev-parse --local-env-vars`, minus the config ones) before running Git.
 An explicit `GIT_DIR` is still honored when choosing the repository, and `wt` refuses when it disagrees with the current directory.
 
+### Git rewrites the Unicode in paths it is given on macOS
+
+With `core.precomposeunicode` (the macOS default), Git stores the path passed to `git worktree add` with its Unicode precomposed (NFC), while the filesystem keeps the name as created, and the main worktree's path comes back with the on-disk bytes.
+Under a folder whose name is decomposed (NFD), `wt new` created the worktree and then reported failure because Git didn't list it at the path wt gave, and `wt remove` refused it as not created by wt.
+Fixing only that comparison would also have let the "you are inside this worktree" check miss, since the working directory and Git's path differ in the same way.
+`wt` now compares paths with `git::same_path`, which precomposes both sides as Git does (iconv `UTF-8-MAC`) on macOS only, where the filesystem treats both forms as one name; it stays lexical and doesn't follow symlinks.
+
 ### `git merge` overwrites ignored files without asking
 
 Git refuses to merge when an untracked file is in the way, but silently replaces an ignored one, e.g. a local `.env` when the merged branch tracks a `.env`.

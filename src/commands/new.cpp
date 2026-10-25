@@ -177,7 +177,7 @@ void check_target_free(const std::vector<git::Worktree>& worktrees,
     const std::string note =
         target == requested ? "" : " (folder names differ only in case)";
     for (const auto& worktree : worktrees) {
-        if (worktree.path != target) {
+        if (!git::same_path(worktree.path, target)) {
             continue;
         }
         if (exists) {
@@ -222,7 +222,7 @@ void report_state(const Context& ctx, const std::string& branch,
     try {
         tip = git::resolve_commit(ctx.repo, "refs/heads/" + branch);
         for (auto& worktree : git::list_worktrees(ctx.repo)) {
-            if (worktree.path == target) {
+            if (git::same_path(worktree.path, target)) {
                 registered = std::move(worktree);
                 break;
             }
@@ -298,7 +298,7 @@ std::optional<std::string> creation_problem(const Context& ctx,
                                             const fs::path& target,
                                             const std::string& start) {
     for (const auto& worktree : git::list_worktrees(ctx.repo)) {
-        if (worktree.path != target) {
+        if (!git::same_path(worktree.path, target)) {
             continue;
         }
         if (worktree.branch != branch) {

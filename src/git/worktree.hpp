@@ -55,6 +55,13 @@ Changes parse_status(std::string_view porcelain);
 // first. Throws Error if `dir` isn't in a repository.
 std::vector<Worktree> list_worktrees(const std::filesystem::path& dir);
 
+// Reports whether `a` and `b` are the same path, however Git and the
+// filesystem spelled it. On macOS, Git stores the paths it is given with their
+// Unicode precomposed (core.precomposeunicode), while the filesystem returns
+// names as they were created and treats both forms as one name, so a path wt
+// passes to Git can come back as different bytes. Doesn't resolve symlinks.
+bool same_path(const std::filesystem::path& a, const std::filesystem::path& b);
+
 // Returns the index of the worktree containing `dir`, preferring the deepest
 // match so a worktree nested inside another is still found.
 std::optional<std::size_t> find_worktree_containing(

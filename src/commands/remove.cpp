@@ -33,7 +33,7 @@ void check_managed(const Context& ctx,
     const fs::path common = git::common_dir(ctx.repo);
     const fs::path container =
         layout::container_path(worktrees.front().path, common);
-    if (worktree.path.parent_path() != container) {
+    if (!git::same_path(worktree.path.parent_path(), container)) {
         throw Error(ErrorKind::refused,
                     "the worktree for '" + task + "' at " +
                         worktree.path.string() +
@@ -179,7 +179,7 @@ void report_failure(const Context& ctx, const git::Result& result,
 std::optional<std::string> removal_problem(const Context& ctx,
                                            const fs::path& path) {
     for (const auto& worktree : git::list_worktrees(ctx.repo)) {
-        if (worktree.path == path) {
+        if (git::same_path(worktree.path, path)) {
             return "Git still lists it as a worktree";
         }
     }

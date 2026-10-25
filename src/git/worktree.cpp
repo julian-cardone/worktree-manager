@@ -10,6 +10,10 @@
 #include <system_error>
 #include <utility>
 
+#if defined(__APPLE__)
+#include <iconv.h>
+#endif
+
 namespace wt::git {
 
 namespace fs = std::filesystem;
@@ -136,6 +140,40 @@ std::vector<Worktree> list_worktrees(const fs::path& dir) {
 
 namespace {
 
+// `path` with its Unicode precomposed the way Git does on macOS, through
+// iconv's UTF-8-MAC. Unchanged elsewhere, and if it isn't valid UTF-8, as
+// Git leaves it then too.
+fs::path precomposed(const fs::path& path) {
+#if defined(__APPLE__)
+    std::string in = path.string();
+    if (std::all_of(in.begin(), in.end(), [](char c) {
+            return static_cast<unsigned char>(c) < 0x80;
+        })) {
+        return path;
+    }
+    const iconv_t cd = ::iconv_open("UTF-8", "UTF-8-MAC");
+    if (cd == reinterpret_cast<iconv_t>(-1)) {
+        return path;
+    }
+    // Precomposing never lengthens UTF-8.
+    std::string out(in.size(), '\0');
+    char* src = in.data();
+    std::size_t src_left = in.size();
+    char* dst = out.data();
+    std::size_t dst_left = out.size();
+    const bool ok = ::iconv(cd, &src, &src_left, &dst, &dst_left) !=
+                    static_cast<std::size_t>(-1);
+    ::iconv_close(cd);
+    if (!ok) {
+        return path;
+    }
+    out.resize(out.size() - dst_left);
+    return out;
+#else
+    return path;
+#endif
+}
+
 // Git reports symlink-free paths, so resolve `dir` the same way.
 fs::path resolve(const fs::path& dir) {
     std::error_code ec;
@@ -145,12 +183,17 @@ fs::path resolve(const fs::path& dir) {
 
 // Reports whether `resolved` is `root` or lies inside it.
 bool within(const fs::path& root, const fs::path& resolved) {
-    return std::mismatch(root.begin(), root.end(), resolved.begin(),
-                         resolved.end())
-               .first == root.end();
+    const fs::path r = precomposed(root);
+    const fs::path d = precomposed(resolved);
+    return std::mismatch(r.begin(), r.end(), d.begin(), d.end()).first ==
+           r.end();
 }
 
 }  // namespace
+
+bool same_path(const fs::path& a, const fs::path& b) {
+    return precomposed(a) == precomposed(b);
+}
 
 std::optional<std::size_t> find_worktree_containing(
     const std::vector<Worktree>& worktrees, const fs::path& dir) {
