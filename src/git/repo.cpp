@@ -101,6 +101,28 @@ bool ref_exists(const fs::path& dir, std::string_view ref) {
     throw Error(error_message(r.err));
 }
 
+std::optional<std::string> conflicting_branch(const fs::path& dir,
+                                              std::string_view branch) {
+    const std::string name(branch);
+    for (auto slash = name.find('/'); slash != std::string::npos;
+         slash = name.find('/', slash + 1)) {
+        if (local_branch_exists(dir, name.substr(0, slash))) {
+            return name.substr(0, slash);
+        }
+    }
+    const Result r =
+        run(dir, {"for-each-ref", "--count=1", "--format=%(refname:strip=2)",
+                  "refs/heads/" + name + "/"});
+    if (r.exit_code != 0) {
+        throw Error(error_message(r.err));
+    }
+    const std::string nested = first_line(r.out);
+    if (nested.empty()) {
+        return std::nullopt;
+    }
+    return nested;
+}
+
 std::optional<std::string> resolve_commit(const fs::path& dir,
                                           std::string_view name) {
     const Result r =

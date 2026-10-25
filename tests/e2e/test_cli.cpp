@@ -497,7 +497,9 @@ TEST_CASE("wt new creates a worktree in the repository's container") {
 
     auto r = run_wt(box, repo, {"new", "feature-x"});
     CHECK(r.code == 0);
-    CHECK(r.err == "wt: created branch feature-x from main\n");
+    CHECK(r.err == "wt: created branch feature-x from main at " +
+                       git_output(box, repo, {"rev-parse", "--short", "main"}) +
+                       " initial\n");
     REQUIRE(r.out.ends_with("/feature-x\n"));
     const fs::path path(r.out.substr(0, r.out.size() - 1));
 
@@ -575,7 +577,8 @@ TEST_CASE("wt new uses wt.integrationBranch when it's set") {
 
     auto r = run_wt(box, repo, {"new", "feature"});
     CHECK(r.code == 0);
-    CHECK(r.err == "wt: created branch feature from develop\n");
+    CHECK_THAT(r.err,
+               StartsWith("wt: created branch feature from develop at "));
 }
 
 TEST_CASE("wt new fails when wt.integrationBranch names a missing branch") {
@@ -608,7 +611,7 @@ TEST_CASE("wt new follows origin's default branch") {
     git(box, clone, {"branch", "trunk", "origin/trunk"});
     r = run_wt(box, clone, {"new", "feature"});
     CHECK(r.code == 0);
-    CHECK(r.err == "wt: created branch feature from trunk\n");
+    CHECK_THAT(r.err, StartsWith("wt: created branch feature from trunk at "));
 }
 
 TEST_CASE("wt new falls back to master") {
@@ -621,7 +624,7 @@ TEST_CASE("wt new falls back to master") {
 
     auto r = run_wt(box, repo, {"new", "feature"});
     CHECK(r.code == 0);
-    CHECK(r.err == "wt: created branch feature from master\n");
+    CHECK_THAT(r.err, StartsWith("wt: created branch feature from master at "));
 }
 
 TEST_CASE("wt new refuses to guess an integration branch") {
@@ -692,10 +695,74 @@ TEST_CASE("wt new refuses a branch that already exists") {
     const fs::path repo = make_repo(box, box.work() / "repo");
     git(box, repo, {"branch", "feature"});
 
+    const std::string tip = git_output(box, repo, {"rev-parse", "feature"});
+
     auto r = run_wt(box, repo, {"new", "feature"});
     CHECK(r.code == 1);
     CHECK(r.out.empty());
-    CHECK(r.err == "wt: error: branch 'feature' already exists\n");
+    CHECK(r.err ==
+          "wt: error: branch 'feature' already exists; wt new only "
+          "creates new branches, so choose another task name\n");
+    CHECK(entries(box.work()) == std::vector<fs::path>{repo});
+    CHECK(git_output(box, repo, {"rev-parse", "feature"}) == tip);
+}
+
+TEST_CASE("wt new says where an existing branch is checked out") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature");
+
+    auto r = run_wt(box, repo, {"new", "feature"});
+    CHECK(r.code == 1);
+    CHECK(r.out.empty());
+    CHECK(r.err ==
+          "wt: error: branch 'feature' already exists and is "
+          "checked out at " +
+              path.string() +
+              "; wt new only creates new branches, so choose "
+              "another task name\n");
+}
+
+TEST_CASE("wt new refuses a branch Git can't create next to an existing one") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    std::string task;
+    std::string existing;
+
+    SECTION("existing branch is a directory of the task") {
+        existing = "payments";
+        task = "payments/api";
+    }
+    SECTION("task is a directory of an existing branch") {
+        existing = "payments/api/v2";
+        task = "payments";
+    }
+    git(box, repo, {"branch", existing});
+
+    auto r = run_wt(box, repo, {"new", task});
+    CHECK(r.code == 1);
+    CHECK(r.out.empty());
+    CHECK(r.err == "wt: error: cannot create branch '" + task +
+                       "' because branch '" + existing +
+                       "' exists, and Git can't have both; choose another "
+                       "task name\n");
+    CHECK(entries(box.work()) == std::vector<fs::path>{repo});
+}
+
+TEST_CASE("wt new starts from the integration branch's exact commit") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    // Starting from the commit, not the branch name, also keeps Git from
+    // making the task track the integration branch.
+    git(box, repo, {"config", "branch.autoSetupMerge", "always"});
+
+    const fs::path path = wt_new(box, repo, "feature");
+    CHECK(git_output(box, path, {"rev-parse", "HEAD"}) ==
+          git_output(box, repo, {"rev-parse", "main"}));
+    CHECK(git_output(
+              box, repo,
+              {"for-each-ref", "--format=%(upstream)", "refs/heads/feature"})
+              .empty());
 }
 
 TEST_CASE("wt new refuses a target path that already exists") {
@@ -719,8 +786,11 @@ TEST_CASE("wt new refuses a target path that already exists") {
     }
 
     auto r = run_wt(box, repo, {"new", "feature"});
-    CHECK(r.code == 1);
-    CHECK(r.err == "wt: error: " + target.string() + " already exists\n");
+    CHECK(r.code == 2);
+    CHECK(r.err ==
+          "wt: refused: cannot create the worktree: " + target.string() +
+              " already exists; wt never reuses or overwrites it, so "
+              "move it away or choose another task name\n");
     CHECK_FALSE(fs::exists(target / ".git"));
     if (fs::is_regular_file(target / "data")) {
         CHECK(read_file(target / "data") == "keep me");
@@ -734,8 +804,8 @@ TEST_CASE("wt new refuses two tasks that share a folder") {
     const fs::path first = wt_new(box, repo, "a/b");
 
     auto r = run_wt(box, repo, {"new", "a-b"});
-    CHECK(r.code == 1);
-    CHECK(r.err == "wt: error: " + first.string() +
+    CHECK(r.code == 2);
+    CHECK(r.err == "wt: refused: " + first.string() +
                        " is already the worktree for branch a/b\n");
 }
 
@@ -748,7 +818,7 @@ TEST_CASE("wt new refuses a path Git still has registered") {
     fs::remove_all(target);
 
     auto r = run_wt(box, repo, {"new", "feature"});
-    CHECK(r.code == 1);
+    CHECK(r.code == 2);
     CHECK_THAT(r.err, ContainsSubstring("already has a worktree registered") &&
                           ContainsSubstring("run `git worktree prune`"));
     CHECK_FALSE(fs::exists(target));
@@ -867,6 +937,30 @@ TEST_CASE("wt new fails when Git succeeds but the worktree isn't the task's") {
                        "retrying\n");
     // Left as the hook made it, for the user to inspect.
     CHECK(git_output(box, target, {"branch", "--show-current"}) == "other");
+}
+
+TEST_CASE("wt new fails when Git succeeds but the branch has moved") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path target = expected_container(box, repo) / "feature";
+    const std::string start = git_output(box, repo, {"rev-parse", "main"});
+    const fs::path hook = repo / ".git" / "hooks" / "post-checkout";
+    write_file(hook,
+               "#!/bin/sh\n[ \"$(git branch --show-current)\" = feature ] || "
+               "exit 0\ngit commit -q --allow-empty -m moved\n");
+    fs::permissions(hook, fs::perms::owner_all);
+
+    auto r = run_wt(box, repo, {"new", "feature"});
+    CHECK(r.code == 4);
+    CHECK(r.out.empty());
+    const std::string moved = git_output(box, repo, {"rev-parse", "feature"});
+    CHECK(r.err ==
+          "wt: git error: git worktree add reported success, but "
+          "branch feature is at " +
+              moved + ", not at " + start +
+              "\nwt: the result could not be verified and nothing "
+              "was removed; inspect it with `wt list` before "
+              "retrying\n");
 }
 
 TEST_CASE("wt new works with a bare repository") {

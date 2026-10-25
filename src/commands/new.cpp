@@ -36,9 +36,39 @@ bool path_exists(const fs::path& path) {
     return true;
 }
 
+// Fails if `branch` exists or Git couldn't create it next to an existing one.
+// WARNING: wt new never attaches the task to a branch that already exists; its
+// commits may belong to unrelated work.
+void check_branch_free(const Context& ctx,
+                       const std::vector<git::Worktree>& worktrees,
+                       const std::string& branch) {
+    if (git::ref_exists(ctx.repo, "refs/heads/" + branch)) {
+        std::string where;
+        for (const auto& worktree : worktrees) {
+            if (worktree.branch == branch) {
+                where = " and is checked out at " + worktree.path.string();
+                break;
+            }
+        }
+        throw Error(ErrorKind::user,
+                    "branch '" + branch + "' already exists" + where +
+                        "; wt new only creates new branches, so choose "
+                        "another task name");
+    }
+    if (auto other = git::conflicting_branch(ctx.repo, branch)) {
+        throw Error(ErrorKind::user,
+                    "cannot create branch '" + branch + "' because branch '" +
+                        *other +
+                        "' exists, and Git can't have both; choose another "
+                        "task name");
+    }
+}
+
 // Fails if the target path is already taken in any way Git or the filesystem
 // would notice. Git checks too, but its errors are less clear. Only call this
 // once the container is verified, so wt never looks inside one it doesn't own.
+// WARNING: never reuse or overwrite what is there; it isn't wt's. A refusal,
+// not a user error: the task itself may be fine.
 void check_target_free(const std::vector<git::Worktree>& worktrees,
                        const fs::path& target) {
     const bool exists = path_exists(target);
@@ -47,19 +77,22 @@ void check_target_free(const std::vector<git::Worktree>& worktrees,
             continue;
         }
         if (exists) {
-            throw Error(ErrorKind::user,
+            throw Error(ErrorKind::refused,
                         target.string() + " is already the worktree for " +
                             (worktree.branch ? "branch " + *worktree.branch
                                              : std::string("a detached HEAD")));
         }
         throw Error(
-            ErrorKind::user,
+            ErrorKind::refused,
             "Git already has a worktree registered at " + target.string() +
                 " although its directory is gone; run `git worktree prune` to "
                 "forget it");
     }
     if (exists) {
-        throw Error(ErrorKind::user, target.string() + " already exists");
+        throw Error(ErrorKind::refused,
+                    "cannot create the worktree: " + target.string() +
+                        " already exists; wt never reuses or overwrites it, "
+                        "so move it away or choose another task name");
     }
 }
 
@@ -113,13 +146,15 @@ void report_failure(const Context& ctx, const git::Result& result,
 }
 
 // Checks, after Git reports success, that it lists a worktree at `target` with
-// `branch` checked out. A post-checkout hook, for one, runs in the new
-// worktree once Git has made it, and can switch it to another branch or
-// delete it. Returns what is wrong, if anything.
+// `branch` checked out, and that `branch` starts at `start`. A post-checkout
+// hook, for one, runs in the new worktree once Git has made it, and can switch
+// it to another branch, move the branch, or delete it. Returns what is wrong,
+// if anything.
 // WARNING: wt prints the path, which scripts `cd` into, only once this passes.
 std::optional<std::string> creation_problem(const Context& ctx,
                                             const std::string& branch,
-                                            const fs::path& target) {
+                                            const fs::path& target,
+                                            const std::string& start) {
     for (const auto& worktree : git::list_worktrees(ctx.repo)) {
         if (worktree.path != target) {
             continue;
@@ -132,6 +167,11 @@ std::optional<std::string> creation_problem(const Context& ctx,
         }
         if (!path_exists(target)) {
             return target.string() + " is gone";
+        }
+        const auto tip = git::resolve_commit(ctx.repo, "refs/heads/" + branch);
+        if (tip != start) {
+            return "branch " + branch + " is at " + tip.value_or("nothing") +
+                   ", not at " + start;
         }
         return std::nullopt;
     }
@@ -165,9 +205,7 @@ int new_command(const Context& ctx, const std::string& task) {
         layout::container_path(worktrees.front().path, common);
     const fs::path target = container / layout::task_folder_name(task);
 
-    if (git::ref_exists(ctx.repo, "refs/heads/" + branch)) {
-        throw Error(ErrorKind::user, "branch '" + branch + "' already exists");
-    }
+    check_branch_free(ctx, worktrees, branch);
     layout::prepare_container(container, common);
     check_target_free(worktrees, target);
 
@@ -177,18 +215,29 @@ int new_command(const Context& ctx, const std::string& task) {
                 << ui::printable(base) << " and doesn't track it\n";
     }
 
-    // "--" and the full ref keep the path and base from being read as
-    // options or as an ambiguous name (e.g. a tag also called "main").
-    const git::Result result =
-        git::run(ctx.repo, {"worktree", "add", "-b", branch, "--",
-                            target.string(), "refs/heads/" + base});
+    // WARNING: resolved immediately before creating, and given to Git as a
+    // commit, so the task starts exactly where wt reports even if the base
+    // moves meanwhile, and never from anything but the integration branch.
+    const auto start =
+        git::resolve_commit(ctx.repo, "refs/heads/" + base + "^{commit}");
+    if (!start) {
+        throw Error(ErrorKind::user, "the integration branch '" + base +
+                                         "' disappeared; check it with "
+                                         "`git branch` and rerun");
+    }
+    // Read now, so nothing can fail between creating and reporting.
+    const std::string start_summary = git::commit_summary(ctx.repo, *start);
+    // "--" keeps the path from being read as an option.
+    const git::Result result = git::run(
+        ctx.repo,
+        {"worktree", "add", "-b", branch, "--", target.string(), *start});
     if (result.exit_code != 0) {
         report_failure(ctx, result, branch, target);
         return exit_code(ErrorKind::git);
     }
     // Nothing goes on stdout, so `cd "$(wt new ...)"` can't land somewhere
     // unexpected.
-    if (auto problem = creation_problem(ctx, branch, target)) {
+    if (auto problem = creation_problem(ctx, branch, target, *start)) {
         ctx.err << error_prefix(ErrorKind::git)
                 << "git worktree add reported success, but "
                 << ui::printable(*problem) << '\n'
@@ -198,7 +247,8 @@ int new_command(const Context& ctx, const std::string& task) {
     }
 
     ctx.err << "wt: created branch " << ui::printable(branch) << " from "
-            << ui::printable(base) << '\n';
+            << ui::printable(base) << " at " << ui::printable(start_summary)
+            << '\n';
     // Unsanitized on purpose: `cd "$(wt new foo)"` needs the exact path.
     ctx.out << target.string() << '\n';
     return 0;

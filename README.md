@@ -157,17 +157,24 @@ They can't start with `-` or `.`, start or end with `/`, or contain `//` or `..`
 
 **Before creating anything**, `wt new` fails if:
 
-- the branch already exists locally;
+- the branch already exists locally, even if it's a task's (`wt new` never reuses a branch);
+- another branch makes the name impossible for Git, e.g. `payments` exists and the task is `payments/api`, or the reverse;
 - anything exists at the target path, including an empty directory, a file, or a dangling symlink (e.g. `a/b` and `a-b` would share a folder);
 - Git still has a worktree registered at the target path, even one whose directory was deleted (`git worktree prune` clears those);
 - the container exists but isn't verifiably owned by this repository.
 
+The two branch checks are errors (exit 1).
+The rest are refusals (exit 2): the task may be fine, but something already occupies its place, and `wt` won't reuse or overwrite what it can't prove it owns.
+
 If `origin/<task>` exists, `wt` warns but still creates a new local branch from the integration branch, without tracking it.
+
+**The starting point** is the integration branch's commit, read immediately before creating the worktree and named in the success message (`wt: created branch feature-x from main at 5f749c1 Fix x`).
+`wt` hands Git that commit rather than the branch name, so the task starts exactly there even if the branch moves meanwhile, and Git never sets the integration branch as its upstream, even with `branch.autoSetupMerge=always`.
 
 **If Git fails partway**, for example because a `post-checkout` hook exits non-zero after the worktree was created, `wt new` exits 4, shows Git's output, and lists the branch or directory left behind.
 It never removes them itself, but says how: `wt remove <task>` for the worktree, then `git branch -d <task>` for the branch.
 
-**After Git succeeds**, `wt new` checks that Git lists a worktree at the target path with `<task>` checked out, since a `post-checkout` hook could have switched or deleted it.
+**After Git succeeds**, `wt new` checks that Git lists a worktree at the target path with `<task>` checked out, starting at that commit, since a `post-checkout` hook could have switched, moved, or deleted it.
 If not, it exits 4 with nothing on stdout, says what it found, and removes nothing.
 
 ### `wt status <task>`

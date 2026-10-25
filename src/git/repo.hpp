@@ -26,6 +26,11 @@ std::filesystem::path common_dir(const std::filesystem::path& dir);
 // Reports whether `ref` (a full name, e.g. "refs/heads/main") exists.
 bool ref_exists(const std::filesystem::path& dir, std::string_view ref);
 
+// An existing local branch that keeps `branch` from being created because one
+// name is a directory of the other (e.g. "a" and "a/b"), or nothing.
+std::optional<std::string> conflicting_branch(const std::filesystem::path& dir,
+                                              std::string_view branch);
+
 // The commit `name` (e.g. "HEAD", "MERGE_HEAD") resolves to in the worktree at
 // `dir`, or nothing if it doesn't exist there.
 std::optional<std::string> resolve_commit(const std::filesystem::path& dir,
