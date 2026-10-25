@@ -89,7 +89,8 @@ This is a policy for this repository only; `wt` itself follows each repository's
 
 - The repository is configured with `git config merge.ff only`, so `wt merge` lands a task only by fast-forwarding. Check it is still set before landing; set it again if not.
 - Several tasks may be in progress at once. Land each with `wt merge <task>` when it is finished.
-- If `wt merge` refuses because the task is behind `main`, run `git rebase main` in that task's own worktree, resolve any conflicts there (`git add`, then `git rebase --continue`), rerun the tests, then rerun `wt merge`.
+- Before reporting a task complete or landing it, run `git rebase main` in that task's own worktree, resolve any conflicts there (`git add`, then `git rebase --continue`), review the resulting diff against current `main`, and rerun the relevant tests. The same applies when `wt merge` refuses because the task is behind `main`.
+- Resolving textual conflicts is not enough: account for behavior that landed on `main` while the task was in progress, such as new code paths the task's changes must also cover.
 - Never merge `main` into a task branch, and never pass a branch name to `git rebase` (e.g. `git rebase main <task>`), since that checks the branch out in the current worktree.
 - Keep a task's worktree until `wt merge` has landed it; only then clean up with `wt remove`. `wt` can't give an existing branch a new worktree, so a task removed early can't be rebased.
 - Landed task branches are kept and accumulate until a human deletes them (`git branch -d`). This is known cleanup friction, not a reason to stop.
