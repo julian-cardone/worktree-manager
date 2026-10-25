@@ -202,53 +202,84 @@ void check_target_free(const std::vector<git::Worktree>& worktrees,
     }
 }
 
-// Git can fail after creating the branch or directory (e.g. when a
-// post-checkout hook fails). Say exactly what was left behind, but don't
-// remove it: it may already hold the hook's output, and cleanup that guesses
-// wrong would lose more than it saves.
-void report_failure(const Context& ctx, const git::Result& result,
-                    const std::string& branch, const fs::path& target) {
-    ctx.err << error_prefix(ErrorKind::git)
-            << "git worktree add failed with exit code " << result.exit_code
-            << '\n';
-    std::istringstream lines(result.err);
-    for (std::string line; std::getline(lines, line);) {
-        ctx.err << "  " << ui::printable(line) << '\n';
+// Says what exists now after wt new failed partway, once Git may have created
+// the branch or the worktree, but removes none of it: it may already hold a
+// hook's output, or not be the task's at all if something else created it
+// meanwhile, and cleanup that guesses wrong would lose more than it saves.
+// WARNING: never remove anything here, and suggest a cleanup only when every
+// part is exactly what wt new would have made, so the advice can't touch
+// anything wt didn't create.
+void report_state(const Context& ctx, const std::string& branch,
+                  const fs::path& target, const std::string& start) {
+    std::optional<std::string> tip;
+    std::optional<git::Worktree> registered;
+    bool dir_exists = false;
+    try {
+        tip = git::resolve_commit(ctx.repo, "refs/heads/" + branch);
+        for (auto& worktree : git::list_worktrees(ctx.repo)) {
+            if (worktree.path == target) {
+                registered = std::move(worktree);
+                break;
+            }
+        }
+        dir_exists = path_exists(target);
+    } catch (const std::exception& e) {
+        ctx.err << "wt: warning: cannot check what was left behind: "
+                << ui::printable(e.what()) << '\n'
+                << "wt: no cleanup was attempted; check the branch and "
+                   "worktree with `wt list` and `git branch`\n";
+        return;
     }
 
-    bool branch_left = false;
-    bool path_left = false;
-    try {
-        branch_left = git::ref_exists(ctx.repo, "refs/heads/" + branch);
-        path_left = path_exists(target);
-    } catch (const std::exception& e) {
-        ctx.err << "wt: warning: cannot check what git left behind: "
-                << ui::printable(e.what()) << '\n';
-        return;
+    const bool branch_as_made = tip == start;
+    const bool worktree_as_made =
+        registered && dir_exists && registered->branch == branch;
+
+    ctx.err << "wt: wt new did not complete; current state:\n"
+            << "  branch " << ui::printable(branch) << ": ";
+    if (!tip) {
+        ctx.err << "doesn't exist";
+    } else if (branch_as_made) {
+        ctx.err << "exists, at the commit wt started it from";
+    } else {
+        ctx.err << "exists, but is at " << *tip << ", not at " << start;
     }
-    if (!branch_left && !path_left) {
-        return;
-    }
-    ctx.err << "wt: git did not finish, but left behind:\n";
-    if (branch_left) {
-        ctx.err << "  branch " << ui::printable(branch) << '\n';
-    }
-    if (path_left) {
-        ctx.err << "  worktree " << ui::printable(target.string()) << '\n';
-    }
-    // The worktree goes first: Git won't delete a branch that is checked out.
-    ctx.err << "wt: nothing was removed; if you don't need "
-            << (branch_left && path_left ? "them" : "it") << ", ";
-    if (path_left) {
-        ctx.err << "remove the worktree with `wt remove "
-                << ui::printable(ui::shell_quote(branch)) << '`';
-    }
-    if (branch_left) {
-        ctx.err << (path_left ? ", then " : "")
-                << "delete the branch with `git branch -d "
-                << ui::printable(ui::shell_quote(branch)) << '`';
+    ctx.err << "\n  " << ui::printable(target.string()) << ": ";
+    if (registered && dir_exists) {
+        ctx.err << "a worktree with "
+                << (registered->branch
+                        ? "branch " + ui::printable(*registered->branch)
+                        : std::string("a detached HEAD"))
+                << " checked out";
+    } else if (registered) {
+        ctx.err << "Git lists a worktree here, but its directory is gone";
+    } else if (dir_exists) {
+        ctx.err << "exists, but Git doesn't list it as a worktree";
+    } else {
+        ctx.err << "doesn't exist";
     }
     ctx.err << '\n';
+
+    const bool worktree_absent = !registered && !dir_exists;
+    if (!tip && worktree_absent) {
+        ctx.err << "wt: nothing was left behind\n";
+        return;
+    }
+    if ((tip && !branch_as_made) || !(worktree_as_made || worktree_absent)) {
+        ctx.err << "wt: no cleanup was attempted; wt can't tell how all of "
+                   "this came about, so check it with `wt list` and "
+                   "`git branch` before removing anything\n";
+        return;
+    }
+    // The worktree goes first: Git won't delete a branch that is checked out.
+    ctx.err << "wt: no cleanup was attempted; if you don't need "
+            << (worktree_as_made ? "them" : "it") << ", ";
+    if (worktree_as_made) {
+        ctx.err << "remove the worktree with `wt remove "
+                << ui::printable(ui::shell_quote(branch)) << "`, then ";
+    }
+    ctx.err << "delete the branch with `git branch -d "
+            << ui::printable(ui::shell_quote(branch)) << "`\n";
 }
 
 // Checks, after Git reports success, that it lists a worktree at `target` with
@@ -338,7 +369,14 @@ int new_command(const Context& ctx, const std::string& task) {
         ctx.repo,
         {"worktree", "add", "-b", branch, "--", target.string(), *start});
     if (result.exit_code != 0) {
-        report_failure(ctx, result, branch, target);
+        ctx.err << error_prefix(ErrorKind::git)
+                << "git worktree add failed with exit code " << result.exit_code
+                << '\n';
+        std::istringstream lines(result.err);
+        for (std::string line; std::getline(lines, line);) {
+            ctx.err << "  " << ui::printable(line) << '\n';
+        }
+        report_state(ctx, branch, target, *start);
         return exit_code(ErrorKind::git);
     }
     // Nothing goes on stdout, so `cd "$(wt new ...)"` can't land somewhere
@@ -346,9 +384,8 @@ int new_command(const Context& ctx, const std::string& task) {
     if (auto problem = creation_problem(ctx, branch, target, *start)) {
         ctx.err << error_prefix(ErrorKind::git)
                 << "git worktree add reported success, but "
-                << ui::printable(*problem) << '\n'
-                << "wt: the result could not be verified and nothing was "
-                   "removed; inspect it with `wt list` before retrying\n";
+                << ui::printable(*problem) << '\n';
+        report_state(ctx, branch, target, *start);
         return exit_code(ErrorKind::git);
     }
 

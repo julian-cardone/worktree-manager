@@ -1039,6 +1039,8 @@ TEST_CASE("wt new warns when the branch already exists on origin") {
 TEST_CASE("wt new reports what git leaves behind and removes nothing") {
     Sandbox box;
     const fs::path repo = make_repo(box, box.work() / "repo");
+    // Before the hook, which would also fire for expected_container's probe.
+    const fs::path target = expected_container(box, repo) / "feature";
     const fs::path hook = repo / ".git" / "hooks" / "post-checkout";
     write_file(hook, "#!/bin/sh\necho hook broke >&2\nexit 3\n");
     fs::permissions(hook, fs::perms::owner_all);
@@ -1050,12 +1052,16 @@ TEST_CASE("wt new reports what git leaves behind and removes nothing") {
         r.err,
         StartsWith("wt: git error: git worktree add failed with exit code 3"));
     CHECK_THAT(r.err, ContainsSubstring("  hook broke\n"));
-    CHECK_THAT(r.err, ContainsSubstring("  branch feature\n"));
-    CHECK_THAT(r.err,
-               ContainsSubstring(
-                   "nothing was removed; if you don't need them, remove the "
-                   "worktree with `wt remove feature`, then delete the branch "
-                   "with `git branch -d feature`\n"));
+    CHECK_THAT(
+        r.err,
+        EndsWith("wt: wt new did not complete; current state:\n"
+                 "  branch feature: exists, at the commit wt started it from\n"
+                 "  " +
+                 target.string() +
+                 ": a worktree with branch feature checked out\n"
+                 "wt: no cleanup was attempted; if you don't need them, "
+                 "remove the worktree with `wt remove feature`, then delete "
+                 "the branch with `git branch -d feature`\n"));
 
     // Both are still there for the user to inspect.
     git(box, repo, {"show-ref", "--verify", "--quiet", "refs/heads/feature"});
@@ -1089,9 +1095,15 @@ TEST_CASE("wt new fails when Git succeeds but the worktree isn't the task's") {
     CHECK(r.err == "wt: git error: git worktree add reported success, but " +
                        target.string() +
                        " has branch other checked out, not feature\n"
-                       "wt: the result could not be verified and nothing "
-                       "was removed; inspect it with `wt list` before "
-                       "retrying\n");
+                       "wt: wt new did not complete; current state:\n"
+                       "  branch feature: exists, at the commit wt started "
+                       "it from\n"
+                       "  " +
+                       target.string() +
+                       ": a worktree with branch other checked out\n"
+                       "wt: no cleanup was attempted; wt can't tell how all "
+                       "of this came about, so check it with `wt list` and "
+                       "`git branch` before removing anything\n");
     // Left as the hook made it, for the user to inspect.
     CHECK(git_output(box, target, {"branch", "--show-current"}) == "other");
 }
@@ -1115,9 +1127,62 @@ TEST_CASE("wt new fails when Git succeeds but the branch has moved") {
           "wt: git error: git worktree add reported success, but "
           "branch feature is at " +
               moved + ", not at " + start +
-              "\nwt: the result could not be verified and nothing "
-              "was removed; inspect it with `wt list` before "
-              "retrying\n");
+              "\nwt: wt new did not complete; current state:\n"
+              "  branch feature: exists, but is at " +
+              moved + ", not at " + start + "\n  " + target.string() +
+              ": a worktree with branch feature checked out\n"
+              "wt: no cleanup was attempted; wt can't tell how all of this "
+              "came about, so check it with `wt list` and `git branch` "
+              "before removing anything\n");
+}
+
+TEST_CASE("wt new never offers to clean up what it didn't create") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path target = expected_container(box, repo) / "feature";
+    // Stands in for another process taking the path after wt checked it:
+    // Git creates the branch, then finds the directory in its way.
+    const fs::path hook = repo / ".git" / "hooks" / "reference-transaction";
+    write_file(hook,
+               "#!/bin/sh\n[ \"$1\" = committed ] || exit 0\n"
+               "mkdir -p \"$TARGET\" && echo theirs > \"$TARGET/file\"\n");
+    fs::permissions(hook, fs::perms::owner_all);
+
+    auto r =
+        run_wt(box, repo, {"new", "feature"}, {{"TARGET", target.string()}});
+    CHECK(r.code == 4);
+    CHECK(r.out.empty());
+    CHECK_THAT(r.err, ContainsSubstring("already exists\n"));
+    CHECK_THAT(
+        r.err,
+        EndsWith("wt: wt new did not complete; current state:\n"
+                 "  branch feature: exists, at the commit wt started it from\n"
+                 "  " +
+                 target.string() +
+                 ": exists, but Git doesn't list it as a worktree\n"
+                 "wt: no cleanup was attempted; wt can't tell how all of this "
+                 "came about, so check it with `wt list` and `git branch` "
+                 "before removing anything\n"));
+    CHECK(read_file(target / "file") == "theirs\n");
+}
+
+TEST_CASE("wt new says when a failure left nothing behind") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path target = expected_container(box, repo) / "feature";
+    // Rejecting the transaction stops Git before it creates the branch.
+    const fs::path hook = repo / ".git" / "hooks" / "reference-transaction";
+    write_file(hook, "#!/bin/sh\n[ \"$1\" = prepared ] && exit 1\nexit 0\n");
+    fs::permissions(hook, fs::perms::owner_all);
+
+    auto r = run_wt(box, repo, {"new", "feature"});
+    CHECK(r.code == 4);
+    CHECK_THAT(r.err, EndsWith("wt: wt new did not complete; current state:\n"
+                               "  branch feature: doesn't exist\n"
+                               "  " +
+                               target.string() +
+                               ": doesn't exist\n"
+                               "wt: nothing was left behind\n"));
 }
 
 TEST_CASE("wt new works with a bare repository") {

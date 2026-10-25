@@ -85,6 +85,12 @@ Hooks run after Git has done its work and can undo or change it without Git fail
 `wt new`, `wt merge`, and `wt remove` now confirm the result from Git's and the filesystem's current state before reporting success (see `AGENTS.md` section 3).
 Matching HEAD's commit isn't enough: a hook can point HEAD at another branch, or detach it, at the same commit, so `wt merge` also checks the integration branch's worktree still has that branch checked out, after a successful merge and before calling a failed one undone.
 
+### A failed `wt new` can't tell what it created from what was already there
+
+`wt new` checks that the branch and path are free, but another process can take either before `git worktree add` runs, and Git then fails with that state in place.
+`wt new` used to call whatever existed afterwards "left behind" by Git and suggest `wt remove` and `git branch -d` for it, including a directory that wasn't a worktree at all.
+It now reports the full current state, removes nothing, and suggests cleanup only when the branch is still at the commit `wt` started it from and the path is absent or a worktree with the task's branch checked out.
+
 ### Ancestry is enough to prove a landed branch is safe to delete
 
 `wt merge` never squashes, so after it lands a task (by fast-forward or merge commit) the task's tip is always an ancestor of the integration branch.

@@ -172,11 +172,13 @@ If `origin/<task>` exists, `wt` warns but still creates a new local branch from 
 **The starting point** is the integration branch's commit, read immediately before creating the worktree and named in the success message (`wt: created branch feature-x from main at 5f749c1 Fix x`).
 `wt` hands Git that commit rather than the branch name, so the task starts exactly there even if the branch moves meanwhile, and Git never sets the integration branch as its upstream, even with `branch.autoSetupMerge=always`.
 
-**If Git fails partway**, for example because a `post-checkout` hook exits non-zero after the worktree was created, `wt new` exits 4, shows Git's output, and lists the branch or directory left behind.
-It never removes them itself, but says how: `wt remove <task>` for the worktree, then `git branch -d <task>` for the branch.
+**If Git fails partway**, for example because a `post-checkout` hook exits non-zero after the worktree was created, `wt new` exits 4, shows Git's output, and reports the current state of the branch and the target path.
+It never removes anything itself.
+When the branch and worktree are exactly what `wt new` would have made, it says how to clean them up: `wt remove <task>` for the worktree, then `git branch -d <task>` for the branch.
+Otherwise, for example when the branch has moved or the path holds something Git doesn't list as a worktree (perhaps created by another process meanwhile), it suggests no cleanup and asks you to inspect the state first.
 
 **After Git succeeds**, `wt new` checks that Git lists a worktree at the target path with `<task>` checked out, starting at that commit, since a `post-checkout` hook could have switched, moved, or deleted it.
-If not, it exits 4 with nothing on stdout, says what it found, and removes nothing.
+If not, it exits 4 with nothing on stdout, says what it found, and reports the current state the same way, removing nothing.
 
 ### `wt status <task>`
 
