@@ -18,6 +18,14 @@ Without `--force`, Git refuses to remove a worktree with modified or untracked f
 An ignored file created by another process between that check and `git worktree remove` is still deleted.
 Git offers no lock covering both steps, so this is an accepted residual race: `wt` keeps the window short, never passes `--force`, and deliberately adds no locking or filesystem machinery of its own.
 
+### `wt remove` deliberately has no force mode
+
+`wt remove` never passes `--force` to Git and exposes no general force option.
+Refusals are intended to preserve uncertain or valuable state and provide a safe recovery path instead.
+`--delete-ignored` is deliberately narrow: it authorizes only ignored-file deletion and bypasses no other safety check.
+A general force mode should not be added speculatively.
+Reconsider it only if repeated real-world use demonstrates a concrete workflow that cannot be supported safely through more specific behavior.
+
 ### `git worktree remove` follows a symlink at the worktree path
 
 If the worktree's directory is replaced by a symlink to another copy of it, Git deletes the files the symlink points to, then fails with "Not a directory".
