@@ -107,7 +107,7 @@ Changes parse_status(std::string_view porcelain) {
                 ++changes.conflicts;
                 break;
             case '?':
-                ++changes.untracked;
+                changes.untracked.emplace_back(entry.substr(2));
                 break;
             case '!':  // only listed with --ignored
                 changes.ignored.emplace_back(entry.substr(2));

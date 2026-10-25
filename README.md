@@ -306,6 +306,7 @@ $ wt merge feature-x --cleanup
 wt: refused: cannot remove feature-x
 
   1 untracked file
+    notes.md
 
 Commit, stash, or remove these changes first.
 
@@ -343,6 +344,7 @@ $ wt remove feature-x
 wt: refused: cannot remove feature-x
 
   1 untracked file
+    notes.md
   2 ignored files
     .env
     build/
@@ -352,6 +354,7 @@ Ignored files are deleted with the worktree; move any you need, then rerun with 
 ```
 
 Counts follow `git status`: an untracked or ignored directory counts once.
+Untracked files are named (up to 10) as well, since Git has no copy of them.
 Git itself deletes ignored files (such as `.env` files or build output) with the worktree, so `wt` treats them as something to lose too, and names them (up to 10) so you can check what `--delete-ignored` would delete.
 `--delete-ignored` lets them be deleted, but never overrides any other check.
 `wt` never passes `--force` to Git, so Git's own check for modified and untracked files still applies.

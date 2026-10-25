@@ -1213,6 +1213,7 @@ TEST_CASE("wt remove refuses a worktree with uncommitted changes") {
           "\n"
           "  2 modified files\n"
           "  1 untracked file\n"
+          "    new.txt\n"
           "\n"
           "Commit, stash, or remove these changes first.\n");
     check_untouched(box, repo, path, "feature-x");
@@ -1237,17 +1238,19 @@ TEST_CASE("wt remove refuses each kind of uncommitted change") {
         fs::remove(path / "README");
         fs::create_directories(path / "dir");
         write_file(path / "dir" / "README", "x\n");
-        expected = "  1 modified file\n  1 untracked file\n";
+        expected =
+            "  1 modified file\n  1 untracked file\n"
+            "    dir/\n";
     }
     SECTION("untracked directory") {
         fs::create_directories(path / "notes" / "deep");
         write_file(path / "notes" / "deep" / "idea.md", "idea\n");
-        expected = "  1 untracked file\n";
+        expected = "  1 untracked file\n    notes/\n";
     }
     SECTION("untracked file hidden by Git config") {
         git(box, repo, {"config", "status.showUntrackedFiles", "no"});
         write_file(path / "new.txt", "new\n");
-        expected = "  1 untracked file\n";
+        expected = "  1 untracked file\n    new.txt\n";
     }
     SECTION("merge conflict") {
         commit_file(box, path, "README", "feature\n");
@@ -1264,6 +1267,38 @@ TEST_CASE("wt remove refuses each kind of uncommitted change") {
                        "\nCommit, stash, or remove these changes first.\n");
     CHECK(registered(box, repo, path));
     CHECK(fs::is_directory(path));
+}
+
+TEST_CASE("wt remove cuts a long list of untracked files short") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature");
+    for (int i = 0; i < 12; ++i) {
+        write_file(path / ("n" + std::to_string(i) + ".txt"), "new\n");
+    }
+
+    auto r = run_wt(box, repo, {"remove", "feature"});
+    CHECK(r.code == 2);
+    CHECK(r.out.empty());
+    CHECK(r.err ==
+          "wt: refused: cannot remove feature\n"
+          "\n"
+          "  12 untracked files\n"
+          "    n0.txt\n"
+          "    n1.txt\n"
+          "    n10.txt\n"
+          "    n11.txt\n"
+          "    n2.txt\n"
+          "    n3.txt\n"
+          "    n4.txt\n"
+          "    n5.txt\n"
+          "    n6.txt\n"
+          "    n7.txt\n"
+          "    ... and 2 more\n"
+          "\n"
+          "Commit, stash, or remove these changes first.\n");
+    check_untouched(box, repo, path, "feature");
+    CHECK(read_file(path / "n11.txt") == "new\n");
 }
 
 TEST_CASE("wt remove refuses ignored files unless told to delete them") {
@@ -1300,6 +1335,7 @@ TEST_CASE("wt remove refuses ignored files unless told to delete them") {
               "wt: refused: cannot remove feature\n"
               "\n"
               "  1 untracked file\n"
+              "    new.txt\n"
               "  2 ignored files\n"
               "    build/\n"
               "    secret.env\n"
@@ -1315,6 +1351,7 @@ TEST_CASE("wt remove refuses ignored files unless told to delete them") {
               "wt: refused: cannot remove feature\n"
               "\n"
               "  1 untracked file\n"
+              "    new.txt\n"
               "\n"
               "Commit, stash, or remove these changes first.\n");
         CHECK(read_file(path / "new.txt") == "new\n");
@@ -2454,6 +2491,7 @@ TEST_CASE(
           "wt: refused: cannot remove feature\n"
           "\n"
           "  1 untracked file\n"
+          "    late.txt\n"
           "\n"
           "Commit, stash, or remove these changes first.\n"
           "\n"

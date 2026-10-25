@@ -149,7 +149,7 @@ TEST_CASE("parse_status counts staged and unstaged changes separately") {
         "1 .D N... 100644 100644 000000 a a deleted.txt\0"s);
     CHECK(changes.staged == 3);
     CHECK(changes.modified == 3);
-    CHECK(changes.untracked == 0);
+    CHECK(changes.untracked.empty());
     CHECK(changes.conflicts == 0);
     CHECK_FALSE(changes.empty());
 }
@@ -161,15 +161,15 @@ TEST_CASE("parse_status skips a rename's original path") {
         "? untracked.txt\0"s);
     CHECK(changes.staged == 1);
     CHECK(changes.modified == 0);
-    CHECK(changes.untracked == 1);
+    CHECK(changes.untracked == std::vector<std::string>{"untracked.txt"});
 }
 
-TEST_CASE("parse_status counts conflicts and untracked files") {
+TEST_CASE("parse_status counts conflicts and lists untracked files") {
     const auto changes = wt::git::parse_status(
         "u UU N... 100644 100644 100644 100644 a b c conflict.txt\0"s
         "? new.txt\0? dir/\0"s);
     CHECK(changes.conflicts == 1);
-    CHECK(changes.untracked == 2);
+    CHECK(changes.untracked == std::vector<std::string>{"new.txt", "dir/"});
     CHECK(changes.staged == 0);
 }
 

@@ -22,17 +22,18 @@ enum class Status { clean, dirty, bare, missing, unknown };
 
 // Uncommitted changes, counted the way `git status` lists them: a file with
 // both staged and unstaged changes counts in both, and an untracked or ignored
-// directory counts once (ignored ones are listed with a trailing '/').
+// directory is listed once, with a trailing '/'.
 struct Changes {
     std::size_t staged = 0;
     std::size_t modified = 0;  // unstaged changes to tracked files
-    std::size_t untracked = 0;
+    std::vector<std::string> untracked;
     std::size_t conflicts = 0;
     std::vector<std::string> ignored;  // only listed when asked for
 
     // Ignored files aren't changes, so they don't count here.
     bool empty() const {
-        return staged == 0 && modified == 0 && untracked == 0 && conflicts == 0;
+        return staged == 0 && modified == 0 && untracked.empty() &&
+               conflicts == 0;
     }
 };
 

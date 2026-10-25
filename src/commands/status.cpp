@@ -51,7 +51,8 @@ int status_command(const Context& ctx, const std::string& task) {
         const auto& changes = status.changes;
         rows.push_back({"Staged:", std::to_string(changes.staged)});
         rows.push_back({"Modified:", std::to_string(changes.modified)});
-        rows.push_back({"Untracked:", std::to_string(changes.untracked)});
+        rows.push_back(
+            {"Untracked:", std::to_string(changes.untracked.size())});
         rows.push_back({"Conflicts:", std::to_string(changes.conflicts)});
     }
     // Branch refs rather than the worktree's HEAD, so this works even when

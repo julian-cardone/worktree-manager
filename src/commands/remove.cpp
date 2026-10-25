@@ -63,38 +63,43 @@ void add_count(std::vector<std::string>& lines, std::size_t count,
     }
 }
 
-// Explains what removal would destroy, on stderr. Ignored files are named,
-// not just counted, so deciding to pass --delete-ignored means having seen
-// whether something like a .env file is among them.
+// The count, then the first few paths, e.g. "1 untracked file" + "new.txt".
+void add_listed(std::vector<std::string>& lines,
+                const std::vector<std::string>& paths,
+                const std::string& what) {
+    // Enough to spot what matters without flooding the terminal.
+    constexpr std::size_t kMaxShown = 10;
+
+    add_count(lines, paths.size(), what);
+    const std::size_t shown = std::min(paths.size(), kMaxShown);
+    for (std::size_t i = 0; i < shown; ++i) {
+        lines.push_back("  " + ui::printable(paths[i]));
+    }
+    if (paths.size() > shown) {
+        lines.push_back("  ... and " + std::to_string(paths.size() - shown) +
+                        " more");
+    }
+}
+
+// Explains what removal would destroy, on stderr. Untracked and ignored files
+// are named, not just counted: Git has no copy of them, and deciding to pass
+// --delete-ignored means having seen whether something like a .env file is
+// among them.
 void report_blocked(const Context& ctx, const std::string& task,
                     const git::Changes& changes, bool show_ignored) {
-    // Enough to spot what matters without flooding the terminal.
-    constexpr std::size_t kMaxIgnoredShown = 10;
-
     std::vector<std::string> lines;
     add_count(lines, changes.staged, "staged");
     add_count(lines, changes.modified, "modified");
-    add_count(lines, changes.untracked, "untracked");
+    add_listed(lines, changes.untracked, "untracked");
     add_count(lines, changes.conflicts, "conflicted");
     if (show_ignored) {
-        add_count(lines, changes.ignored.size(), "ignored");
+        add_listed(lines, changes.ignored, "ignored");
     }
 
     ctx.err << error_prefix(ErrorKind::refused) << "cannot remove "
             << ui::printable(task) << "\n\n";
     for (const auto& line : lines) {
         ctx.err << "  " << line << '\n';
-    }
-    if (show_ignored) {
-        const std::size_t shown =
-            std::min(changes.ignored.size(), kMaxIgnoredShown);
-        for (std::size_t i = 0; i < shown; ++i) {
-            ctx.err << "    " << ui::printable(changes.ignored[i]) << '\n';
-        }
-        if (changes.ignored.size() > shown) {
-            ctx.err << "    ... and " << changes.ignored.size() - shown
-                    << " more\n";
-        }
     }
     ctx.err << '\n';
     if (!changes.empty()) {
