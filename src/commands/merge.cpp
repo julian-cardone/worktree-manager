@@ -241,12 +241,12 @@ void print_git_output(const Context& ctx, const git::Result& result) {
 
 int merge_command(const Context& ctx, const std::string& task) {
     // Also confirms we're inside a repository, with Git's own error if not.
-    const auto worktrees = git::list_worktrees(ctx.cwd);
-    if (!git::is_valid_branch_name(ctx.cwd, task) ||
-        !git::ref_exists(ctx.cwd, "refs/heads/" + task)) {
+    const auto worktrees = git::list_worktrees(ctx.repo);
+    if (!git::is_valid_branch_name(ctx.repo, task) ||
+        !git::ref_exists(ctx.repo, "refs/heads/" + task)) {
         throw Error(ErrorKind::user, "no branch named '" + task + "'");
     }
-    const std::string base = git::integration_branch(ctx.cwd);
+    const std::string base = git::integration_branch(ctx.repo);
     if (task == base) {
         throw Error(ErrorKind::user, "'" + task +
                                          "' is the integration branch; there "
@@ -254,8 +254,8 @@ int merge_command(const Context& ctx, const std::string& task) {
     }
 
     // Mid-rebase, the branch still points at the commits being rewritten.
-    if (const auto where =
-            git::rebasing_worktree(worktrees, git::common_dir(ctx.cwd), task)) {
+    if (const auto where = git::rebasing_worktree(
+            worktrees, git::common_dir(ctx.repo), task)) {
         throw Error(ErrorKind::refused,
                     "'" + task + "' is being rebased in " + where->string() +
                         "; finish the rebase (`git rebase --continue`) or "
@@ -280,7 +280,7 @@ int merge_command(const Context& ctx, const std::string& task) {
     const std::string shown_task = ui::printable(task);
     const std::string shown_base = ui::printable(base);
     const auto divergence =
-        git::divergence(ctx.cwd, "refs/heads/" + task, "refs/heads/" + base);
+        git::divergence(ctx.repo, "refs/heads/" + task, "refs/heads/" + base);
     if (divergence.ahead == 0) {
         ctx.out << shown_base << " already contains " << shown_task
                 << "; nothing to merge\n";
@@ -299,7 +299,8 @@ int merge_command(const Context& ctx, const std::string& task) {
     }
     // What gets merged is checked against this, so a commit added to the task
     // meanwhile can't make the check fail; it would land too.
-    const auto task_commit = git::resolve_commit(ctx.cwd, "refs/heads/" + task);
+    const auto task_commit =
+        git::resolve_commit(ctx.repo, "refs/heads/" + task);
     if (!task_commit) {
         throw Error(ErrorKind::internal, "cannot read branch '" + task + "'");
     }

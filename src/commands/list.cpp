@@ -28,7 +28,7 @@ std::string branch_label(const git::Worktree& worktree) {
 }  // namespace
 
 int list_command(const Context& ctx) {
-    const auto worktrees = git::list_worktrees(ctx.cwd);
+    const auto worktrees = git::list_worktrees(ctx.repo);
     const auto current = git::find_worktree_containing(worktrees, ctx.cwd);
 
     std::vector<std::vector<std::string>> rows = {

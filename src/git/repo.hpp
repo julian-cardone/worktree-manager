@@ -8,6 +8,16 @@
 
 namespace wt::git {
 
+// Where repository-wide Git commands should run for wt started in `cwd` with
+// the given GIT_DIR. Without GIT_DIR, that's `cwd`. Outside any repository,
+// GIT_DIR alone names one (as it does for Git), and its shared Git directory
+// is returned. Inside one, GIT_DIR must be the current directory's own Git
+// directory: anything else is a refused wt::Error rather than a guess, and a
+// GIT_DIR that isn't a Git directory is a user wt::Error.
+std::filesystem::path invoked_repository(
+    const std::filesystem::path& cwd,
+    const std::optional<std::string>& git_dir);
+
 // The repository's shared Git directory as an absolute, symlink-free path:
 // the main worktree's .git, or a bare repository itself. Throws Error if
 // `dir` isn't in a repository.

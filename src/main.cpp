@@ -6,9 +6,10 @@
 #include <system_error>
 
 int main(int argc, char** argv) {
-    // This is the only place wt reads the process working directory and HOME;
-    // commands receive them through Context. It fails if the directory was
-    // deleted, e.g. when the shell is still sitting in a removed worktree.
+    // This is the only place wt reads the process working directory, HOME,
+    // and GIT_DIR; commands receive them through Context. It fails if the
+    // directory was deleted, e.g. when the shell is still sitting in a removed
+    // worktree.
     std::error_code ec;
     auto cwd = std::filesystem::current_path(ec);
     if (ec) {
@@ -18,6 +19,9 @@ int main(int argc, char** argv) {
     }
 
     const char* home = std::getenv("HOME");
+    const char* git_dir = std::getenv("GIT_DIR");
     return wt::run(argc, argv,
-                   wt::Context{cwd, std::cout, std::cerr, home ? home : ""});
+                   wt::Context{cwd, std::cout, std::cerr, home ? home : "",
+                               git_dir ? std::optional<std::string>(git_dir)
+                                       : std::nullopt});
 }

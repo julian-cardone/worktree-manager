@@ -1,5 +1,6 @@
 #include "git/repo.hpp"
 
+#include "error.hpp"
 #include "git/git.hpp"
 
 #include <charconv>
@@ -23,7 +24,60 @@ bool local_branch_exists(const fs::path& dir, const std::string& name) {
     return ref_exists(dir, "refs/heads/" + name);
 }
 
+// Absolute, symlink-free, so paths from different queries compare equal.
+fs::path canonical_path(const std::string& path) {
+    std::error_code ec;
+    fs::path resolved = fs::weakly_canonical(path, ec);
+    return ec ? fs::path(path).lexically_normal() : resolved;
+}
+
 }  // namespace
+
+fs::path invoked_repository(const fs::path& cwd,
+                            const std::optional<std::string>& git_dir) {
+    if (!git_dir) {
+        return cwd;
+    }
+    // Every Git command wt runs drops GIT_DIR (see git::run), since it would
+    // override the -C that aims checks at a particular worktree. This is the
+    // one place it is read: --git-dir, which Git resolves against -C just as
+    // it resolves GIT_DIR against the current directory.
+    const Result named =
+        run(cwd, {"--git-dir=" + *git_dir, "rev-parse",
+                  "--path-format=absolute", "--git-dir", "--git-common-dir"});
+    const auto newline = named.out.find('\n');
+    if (named.exit_code != 0 || newline == std::string::npos) {
+        throw wt::Error(
+            ErrorKind::user,
+            "GIT_DIR is set to '" + *git_dir +
+                "', which isn't a Git directory: " + error_message(named.err) +
+                "; unset GIT_DIR or point it at one");
+    }
+    const fs::path named_dir = canonical_path(named.out.substr(0, newline));
+    const fs::path named_common =
+        canonical_path(first_line(named.out.substr(newline + 1)));
+
+    const Result here =
+        run(cwd, {"rev-parse", "--path-format=absolute", "--git-dir"});
+    if (here.exit_code != 0) {
+        // Not in a repository, so GIT_DIR alone names one, as it would for Git
+        // itself (e.g. a bare repository of dotfiles).
+        return named_common;
+    }
+    // WARNING: Unknown state means stop. GIT_DIR naming another repository,
+    // or another worktree of this one, leaves it unclear what the user means;
+    // picking either could aim a mutation at the wrong worktree.
+    const fs::path here_dir = canonical_path(first_line(here.out));
+    if (here_dir != named_dir) {
+        throw wt::Error(ErrorKind::refused,
+                        "GIT_DIR points at " + named_dir.string() +
+                            ", but the current directory belongs to " +
+                            here_dir.string() +
+                            "; unset GIT_DIR, or run wt from the worktree it "
+                            "points at");
+    }
+    return cwd;
+}
 
 fs::path common_dir(const fs::path& dir) {
     const Result r =
@@ -31,13 +85,7 @@ fs::path common_dir(const fs::path& dir) {
     if (r.exit_code != 0) {
         throw Error(error_message(r.err));
     }
-    std::string path = r.out;
-    if (path.ends_with('\n')) {
-        path.pop_back();
-    }
-    std::error_code ec;
-    fs::path resolved = fs::weakly_canonical(path, ec);
-    return ec ? fs::path(path).lexically_normal() : resolved;
+    return canonical_path(first_line(r.out));
 }
 
 bool ref_exists(const fs::path& dir, std::string_view ref) {

@@ -25,7 +25,8 @@ public:
 // Runs `git -C <dir> <args...>` and captures its output. Arguments are passed
 // straight to exec, never through a shell. Inherited variables that would
 // point git at another repository (GIT_DIR, GIT_WORK_TREE, ...) are dropped,
-// so `dir` alone decides. Throws Error if git can't be run.
+// so `dir` alone decides; invoked_repository (repo.hpp) is where wt honors an
+// explicit GIT_DIR. Throws Error if git can't be run.
 Result run(const std::filesystem::path& dir,
            const std::vector<std::string>& args);
 

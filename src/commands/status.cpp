@@ -20,7 +20,7 @@ namespace {
 // counts, so it isn't fatal.
 std::optional<std::string> try_integration_branch(const Context& ctx) {
     try {
-        return git::integration_branch(ctx.cwd);
+        return git::integration_branch(ctx.repo);
     } catch (const Error& e) {
         ctx.err << "wt: warning: not comparing with an integration branch: "
                 << ui::printable(e.what()) << '\n';
@@ -31,9 +31,9 @@ std::optional<std::string> try_integration_branch(const Context& ctx) {
 }  // namespace
 
 int status_command(const Context& ctx, const std::string& task) {
-    const auto worktrees = git::list_worktrees(ctx.cwd);
+    const auto worktrees = git::list_worktrees(ctx.repo);
     const git::Worktree& worktree =
-        find_task_worktree(ctx.cwd, worktrees, task);
+        find_task_worktree(ctx.repo, worktrees, task);
     // Git reports an all-zero HEAD for a branch with no commits yet.
     const bool unborn =
         worktree.head.find_first_not_of('0') == std::string::npos;
@@ -43,7 +43,7 @@ int status_command(const Context& ctx, const std::string& task) {
         {"Path:", ui::printable(ui::tilde_path(worktree.path, ctx.home))},
         {"HEAD:",
          unborn ? "(no commits)"
-                : ui::printable(git::commit_summary(ctx.cwd, worktree.head))},
+                : ui::printable(git::commit_summary(ctx.repo, worktree.head))},
         {"Status:", std::string(git::status_label(status.status))},
     };
     if (status.status == git::Status::clean ||
@@ -59,7 +59,7 @@ int status_command(const Context& ctx, const std::string& task) {
     if (!unborn) {
         if (const auto base = try_integration_branch(ctx);
             base && *base != task) {
-            const auto d = git::divergence(ctx.cwd, "refs/heads/" + task,
+            const auto d = git::divergence(ctx.repo, "refs/heads/" + task,
                                            "refs/heads/" + *base);
             const std::string name = ui::printable(*base);
             rows.push_back({"Ahead " + name + ":", std::to_string(d.ahead)});

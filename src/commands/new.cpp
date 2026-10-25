@@ -80,7 +80,7 @@ void report_failure(const Context& ctx, const git::Result& result,
     bool branch_left = false;
     bool path_left = false;
     try {
-        branch_left = git::ref_exists(ctx.cwd, "refs/heads/" + branch);
+        branch_left = git::ref_exists(ctx.repo, "refs/heads/" + branch);
         path_left = path_exists(target);
     } catch (const std::exception& e) {
         ctx.err << "wt: warning: cannot check what git left behind: "
@@ -120,7 +120,7 @@ void report_failure(const Context& ctx, const git::Result& result,
 std::optional<std::string> creation_problem(const Context& ctx,
                                             const std::string& branch,
                                             const fs::path& target) {
-    for (const auto& worktree : git::list_worktrees(ctx.cwd)) {
+    for (const auto& worktree : git::list_worktrees(ctx.repo)) {
         if (worktree.path != target) {
             continue;
         }
@@ -146,32 +146,32 @@ int new_command(const Context& ctx, const std::string& task) {
                     "invalid task name '" + task + "': " + *problem);
     }
     // Also confirms we're inside a repository, with Git's own error if not.
-    const auto worktrees = git::list_worktrees(ctx.cwd);
+    const auto worktrees = git::list_worktrees(ctx.repo);
     if (worktrees.empty()) {
         throw Error(ErrorKind::internal, "git reported no worktrees");
     }
-    if (!git::is_valid_branch_name(ctx.cwd, task)) {
+    if (!git::is_valid_branch_name(ctx.repo, task)) {
         throw Error(ErrorKind::user,
                     "invalid task name '" + task +
                         "': Git doesn't accept it as a branch name");
     }
     const std::string& branch = task;
-    const std::string base = git::integration_branch(ctx.cwd);
+    const std::string base = git::integration_branch(ctx.repo);
 
     // Always the main worktree, even when run from a linked one, so every
     // worktree of the repository ends up in the same container.
-    const fs::path common = git::common_dir(ctx.cwd);
+    const fs::path common = git::common_dir(ctx.repo);
     const fs::path container =
         layout::container_path(worktrees.front().path, common);
     const fs::path target = container / layout::task_folder_name(task);
 
-    if (git::ref_exists(ctx.cwd, "refs/heads/" + branch)) {
+    if (git::ref_exists(ctx.repo, "refs/heads/" + branch)) {
         throw Error(ErrorKind::user, "branch '" + branch + "' already exists");
     }
     layout::prepare_container(container, common);
     check_target_free(worktrees, target);
 
-    if (git::ref_exists(ctx.cwd, "refs/remotes/origin/" + branch)) {
+    if (git::ref_exists(ctx.repo, "refs/remotes/origin/" + branch)) {
         ctx.err << "wt: warning: origin/" << ui::printable(branch)
                 << " already exists; the new branch starts from "
                 << ui::printable(base) << " and doesn't track it\n";
@@ -180,8 +180,8 @@ int new_command(const Context& ctx, const std::string& task) {
     // "--" and the full ref keep the path and base from being read as
     // options or as an ambiguous name (e.g. a tag also called "main").
     const git::Result result =
-        git::run(ctx.cwd, {"worktree", "add", "-b", branch, "--",
-                           target.string(), "refs/heads/" + base});
+        git::run(ctx.repo, {"worktree", "add", "-b", branch, "--",
+                            target.string(), "refs/heads/" + base});
     if (result.exit_code != 0) {
         report_failure(ctx, result, branch, target);
         return exit_code(ErrorKind::git);

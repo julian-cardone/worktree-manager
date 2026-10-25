@@ -29,7 +29,7 @@ namespace {
 void check_managed(const Context& ctx,
                    const std::vector<git::Worktree>& worktrees,
                    const git::Worktree& worktree, const std::string& task) {
-    const fs::path common = git::common_dir(ctx.cwd);
+    const fs::path common = git::common_dir(ctx.repo);
     const fs::path container =
         layout::container_path(worktrees.front().path, common);
     if (worktree.path.parent_path() != container) {
@@ -126,7 +126,7 @@ void report_failure(const Context& ctx, const git::Result& result,
 // WARNING: wt reports a removal only once this passes.
 std::optional<std::string> removal_problem(const Context& ctx,
                                            const fs::path& path) {
-    for (const auto& worktree : git::list_worktrees(ctx.cwd)) {
+    for (const auto& worktree : git::list_worktrees(ctx.repo)) {
         if (worktree.path == path) {
             return "Git still lists it as a worktree";
         }
@@ -142,9 +142,9 @@ std::optional<std::string> removal_problem(const Context& ctx,
 
 int remove_command(const Context& ctx, const std::string& task,
                    bool delete_ignored) {
-    const auto worktrees = git::list_worktrees(ctx.cwd);
+    const auto worktrees = git::list_worktrees(ctx.repo);
     const git::Worktree& worktree =
-        find_task_worktree(ctx.cwd, worktrees, task);
+        find_task_worktree(ctx.repo, worktrees, task);
     const std::string shown_path =
         ui::printable(ui::tilde_path(worktree.path, ctx.home));
 
@@ -219,8 +219,8 @@ int remove_command(const Context& ctx, const std::string& task,
     // WARNING: never pass --force. Git's own check for modified and untracked
     // files is the last line of defense if something changed since ours.
     // "--" and the absolute path keep the path from being read as an option.
-    const git::Result result =
-        git::run(ctx.cwd, {"worktree", "remove", "--", worktree.path.string()});
+    const git::Result result = git::run(
+        ctx.repo, {"worktree", "remove", "--", worktree.path.string()});
     if (result.exit_code != 0) {
         report_failure(ctx, result, worktree.path);
         return exit_code(ErrorKind::git);

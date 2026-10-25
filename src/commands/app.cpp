@@ -6,6 +6,7 @@
 #include "commands/remove.hpp"
 #include "commands/status.hpp"
 #include "error.hpp"
+#include "git/repo.hpp"
 #include "ui/format.hpp"
 
 #include <CLI/CLI.hpp>
@@ -70,17 +71,19 @@ std::unique_ptr<CLI::App> make_app() {
     return app;
 }
 
-int run(int argc, const char* const* argv, const Context& ctx) {
+int run(int argc, const char* const* argv, const Context& invoked) {
     auto app = make_app();
 
     // With no arguments, show usage rather than silently doing nothing.
     if (argc <= 1) {
-        ctx.out << app->help();
+        invoked.out << app->help();
         return 0;
     }
 
     try {
         app->parse(argc, argv);
+        Context ctx = invoked;
+        ctx.repo = git::invoked_repository(ctx.cwd, ctx.git_dir);
         if (app->got_subcommand("list")) {
             return list_command(ctx);
         }
@@ -101,14 +104,14 @@ int run(int argc, const char* const* argv, const Context& ctx) {
                                   sub->get_option("task")->as<std::string>());
         }
     } catch (const CLI::ParseError& e) {
-        return app->exit(e, ctx.out, ctx.err);
+        return app->exit(e, invoked.out, invoked.err);
     } catch (const Error& e) {
         // Commands report most failures by throwing.
-        return report_error(ctx, e.kind(), e.what());
+        return report_error(invoked, e.kind(), e.what());
     } catch (const std::exception& e) {
         // Anything else wasn't anticipated, e.g. a failing system call; say
         // so rather than abort with no useful message.
-        return report_error(ctx, ErrorKind::internal, e.what());
+        return report_error(invoked, ErrorKind::internal, e.what());
     }
     return 0;
 }
