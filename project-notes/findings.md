@@ -1,58 +1,73 @@
 # Findings
 
-## `git worktree remove` deletes ignored files without asking
+## Open
+
+Known gaps that still need action.
+
+### `git rebase --update-refs` branches look free and stale
+
+`git rebase --update-refs` also moves other branches that point into the rebased commits, and Git records those in the rebasing worktree's `rebase-merge/update-refs`, not in `head-name`.
+Until the rebase finishes, such a branch still points at its old commits but is not checked out anywhere, so `wt merge` doesn't see it as being rebased and could land the pre-rebase commits.
+Git itself treats these branches as checked out; `wt` should read the same file and refuse.
+
+## Addressed
+
+Findings `wt` now handles.
+Each explains why a check or rule exists; keep it while that check or rule does, and revisit it before relaxing one.
+
+### `git worktree remove` deletes ignored files without asking
 
 Without `--force`, Git refuses to remove a worktree with modified or untracked files, but silently deletes ignored ones (`.env` files, local config, build output).
 `wt remove` names the ignored files it would delete and refuses unless `--delete-ignored` is given; `wt merge --cleanup` makes the same check before merging.
 
-## `git worktree remove` follows a symlink at the worktree path
+### `git worktree remove` follows a symlink at the worktree path
 
 If the worktree's directory is replaced by a symlink to another copy of it, Git deletes the files the symlink points to, then fails with "Not a directory".
 `wt remove` refuses any worktree path that isn't a real directory.
 
-## `git worktree remove` allows removing the current worktree
+### `git worktree remove` allows removing the current worktree
 
 Git removes the worktree the command runs from, leaving the shell in a deleted directory.
 `wt remove` refuses when the working directory is inside the target worktree.
 
-## Inherited `GIT_DIR` silently redirects every check
+### Inherited `GIT_DIR` silently redirects every check
 
 Git exports `GIT_DIR`, `GIT_WORK_TREE`, and `GIT_INDEX_FILE` to hooks, `git rebase --exec` commands, and `!` aliases, and they override `git -C`.
 `wt` run from there checked the main checkout instead of the task's worktree, so `wt status` called a dirty worktree clean and `wt remove` deleted its ignored files without asking.
 `git::run` now drops Git's per-repository variables (`git rev-parse --local-env-vars`, minus the config ones) before running Git.
 An explicit `GIT_DIR` is still honored when choosing the repository, and `wt` refuses when it disagrees with the current directory.
 
-## `git merge` overwrites ignored files without asking
+### `git merge` overwrites ignored files without asking
 
 Git refuses to merge when an untracked file is in the way, but silently replaces an ignored one, e.g. a local `.env` when the merged branch tracks a `.env`.
 `wt merge` refuses when the task's branch adds a file where the destination has an ignored file.
 
-## Branch names that differ only in case share ref files
+### Branch names that differ only in case share ref files
 
 On a case-insensitive filesystem, loose refs are files, so `Fix` and `fix` are one file, and `Fix` and `fix/login` need `refs/heads/Fix` as both a file and a directory.
 Git catches this only by accident: a loose ref or reflog happens to be in the way, but a packed ref with reflogs off (`core.logAllRefUpdates=false`, the default in bare repositories) is not, so Git creates the second branch, and later updates to either then fail or shadow the other.
 When Git reports `core.ignorecase`, `wt new` refuses a branch that equals, contains, or is contained by an existing one ignoring case, and names the existing branch.
 
-## A branch being rebased looks free and stale
+### A branch being rebased looks free and stale
 
 Mid-rebase, the worktree is detached and the branch still points at its old commits, so `git worktree list` doesn't show the branch as checked out anywhere.
 `wt merge` used to skip the task's uncommitted-changes check and land the pre-rebase commits.
 It now reads each worktree's rebase state (`rebase-merge`/`rebase-apply` `head-name`, as Git itself does) and refuses.
-Not covered: a branch moved by another branch's `git rebase --update-refs`, which Git records separately.
+Branches moved by `git rebase --update-refs` are not covered yet (see the open finding above).
 
-## Merging `main` into a task makes `main`'s history run backwards
+### Merging `main` into a task makes `main`'s history run backwards
 
 When a task has merged `main` in, landing it fast-forwards, so `main`'s first-parent history goes through "Merge branch 'main' into …".
 `wt` follows Git's merge settings rather than picking a strategy; this repository uses `merge.ff=only` and rebases tasks (see `docs/agent-workflows/landing-tasks.md`).
 `wt merge` explains the rebase step when `merge.ff=only` blocks a task that is behind.
 
-## Git's exit code doesn't prove the operation happened
+### Git's exit code doesn't prove the operation happened
 
 Hooks run after Git has done its work and can undo or change it without Git failing: a `post-checkout` hook can switch a new worktree to another branch, and a `post-merge` hook can reset the merge away.
 `wt` used to report success on exit code 0 alone, so `wt merge` printed "✓ Merged" for a task `main` didn't contain, and `wt new` printed the path of a worktree on the wrong branch.
 `wt new`, `wt merge`, and `wt remove` now confirm the result from Git's and the filesystem's current state before reporting success (see `AGENTS.md` section 3).
 
-## Ancestry is enough to prove a landed branch is safe to delete
+### Ancestry is enough to prove a landed branch is safe to delete
 
 `wt merge` never squashes, so after it lands a task (by fast-forward or merge commit) the task's tip is always an ancestor of the integration branch.
 `wt merge --cleanup` relies on that: it deletes the branch only when its current tip is contained in the integration branch, then lets `git branch -d` check again, so a branch moved in between is kept.

@@ -107,7 +107,7 @@ Use `project-notes/` for information that should persist but does not belong in 
 
 - `project-notes/TODO.md` — deferred work that has already been surfaced to me and approved for recording.
 - `project-notes/wt-usage.md` — missing `wt` capabilities, meaningful friction, and observations from real use.
-- `project-notes/findings.md` — significant product, architecture, safety, reliability, performance, or usability findings.
+- `project-notes/findings.md` — significant product, architecture, safety, reliability, performance, or usability findings: **Open** ones still need action; **Addressed** ones explain why existing checks and rules exist. Move a finding to Addressed when it is handled.
 
 Keep these files concise, current, and actionable. Remove resolved items instead of keeping them as permanent historical logs.
 
