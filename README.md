@@ -105,8 +105,8 @@ Paths under your home directory are shown with `~`.
 | --- | --- |
 | `clean` | No uncommitted changes. |
 | `dirty` | Staged, unstaged, or untracked changes (ignored files don't count). |
-| `missing` | The worktree's directory no longer exists. Git still tracks it until `git worktree prune`. |
-| `unknown` | The status couldn't be read; a warning on stderr explains why. |
+| `missing` | Nothing exists at the worktree's path any more. Git still tracks it; `wt status <task>` explains how to reconnect or forget it. |
+| `unknown` | The status couldn't be read, e.g. a file or dangling symlink replaced the directory; a warning on stderr explains why. |
 | `-` | A bare repository, which has no working files. |
 
 Checking status never modifies a worktree: `wt` runs `git status` with `--no-optional-locks`, so it won't touch the index or contend with other Git processes.
@@ -161,7 +161,7 @@ They can't start with `-` or `.`, start or end with `/`, or contain `//` or `..`
 - another branch makes the name impossible for Git, e.g. `payments` exists and the task is `payments/api`, or the reverse;
 - a local branch would clash with it if case were ignored (`Fix` and `fix`, or `Fix` and `fix/login`), when Git reports a case-insensitive filesystem (`core.ignorecase`), however that branch is stored;
 - anything exists at the target path, including an empty directory, a file, or a dangling symlink (e.g. `a/b` and `a-b` would share a folder);
-- Git still has a worktree registered at the target path, even one whose directory was deleted (`git worktree prune` clears those);
+- Git still has a worktree registered at the target path, even one whose directory was deleted (the error says how to clear it);
 - the container exists but isn't verifiably owned by this repository.
 
 The two branch checks are errors (exit 1).
@@ -214,6 +214,8 @@ The ahead and behind lines are left out for the integration branch itself and fo
 If there is no integration branch, `wt status` warns and leaves them out.
 
 If the worktree's directory is gone, the status is `missing` and the change counts are left out; ahead and behind still show, since they only depend on the branch.
+A warning says how to recover: `git worktree repair <new-path>` if the directory was moved, otherwise `wt remove <task>`.
+If the worktree is locked (e.g. it lives on a removable drive), the warning says Git keeps its record until it is unlocked.
 If the status can't be read, `wt status` prints what it can and exits 1.
 It also exits 1 if no worktree has the branch checked out.
 

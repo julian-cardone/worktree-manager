@@ -28,6 +28,27 @@ std::optional<std::string> try_integration_branch(const Context& ctx) {
     }
 }
 
+// Explains how to recover a worktree whose directory is gone. It may have been
+// deleted, moved, or be on a drive that isn't mounted, and wt can't tell
+// which, so this names the ways out rather than choosing one.
+void report_missing(const Context& ctx, const git::Worktree& worktree,
+                    const std::string& task) {
+    ctx.err << "wt: warning: the worktree's directory is gone";
+    // A lock is how Git keeps a worktree on a removable drive; neither Git
+    // nor `wt remove` forgets it until it's unlocked.
+    if (worktree.locked) {
+        ctx.err << ", but it is locked, so Git keeps its record; if it's no "
+                   "longer needed, unlock it with `git worktree unlock "
+                << ui::printable(ui::shell_quote(worktree.path.string()))
+                << "`\n";
+        return;
+    }
+    ctx.err << "; if it was moved, `git worktree repair <new-path>` "
+               "reconnects it, otherwise `wt remove "
+            << ui::printable(ui::shell_quote(task))
+            << "` makes Git forget it and keeps the branch\n";
+}
+
 }  // namespace
 
 int status_command(const Context& ctx, const std::string& task) {
@@ -71,8 +92,7 @@ int status_command(const Context& ctx, const std::string& task) {
     ctx.out << ui::printable(task) << "\n\n" << ui::format_table(rows);
 
     if (status.status == git::Status::missing) {
-        ctx.err << "wt: warning: the worktree's directory is gone; "
-                   "`git worktree prune` makes Git forget it\n";
+        report_missing(ctx, worktree, task);
     }
     if (status.status == git::Status::unknown) {
         ctx.err << error_prefix(ErrorKind::user) << "cannot read the status of "

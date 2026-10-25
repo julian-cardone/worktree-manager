@@ -338,12 +338,20 @@ StatusResult worktree_status(const Worktree& worktree, bool count_ignored) {
     if (worktree.bare) {
         return {Status::bare, {}, {}};
     }
+    // WARNING: only a path with nothing at it is missing. Something else in
+    // its place (a file, a dangling symlink) may be anyone's, and callers
+    // treat a missing worktree as having nothing left to lose.
     std::error_code ec;
+    if (fs::symlink_status(worktree.path, ec).type() ==
+        fs::file_type::not_found) {
+        return {Status::missing, {}, {}};
+    }
     if (!fs::is_directory(worktree.path, ec)) {
+        // A dangling symlink reports its target as not found.
         if (ec && ec != std::errc::no_such_file_or_directory) {
             return {Status::unknown, ec.message(), {}};
         }
-        return {Status::missing, {}, {}};
+        return {Status::unknown, "it is not a directory", {}};
     }
     // Without its .git file, git would search upward and report the status of
     // whatever repository happens to enclose the directory.

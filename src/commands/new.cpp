@@ -187,11 +187,15 @@ void check_target_free(const std::vector<git::Worktree>& worktrees,
                                              : std::string("a detached HEAD")) +
                             note);
         }
-        throw Error(
-            ErrorKind::refused,
-            "Git already has a worktree registered at " + target.string() +
-                " although its directory is gone; run `git worktree prune` to "
-                "forget it");
+        // `git worktree prune` would also forget every other stale worktree.
+        const std::string forget =
+            worktree.branch
+                ? "`wt remove " + ui::shell_quote(*worktree.branch) + "`"
+                : std::string("`git worktree prune`");
+        throw Error(ErrorKind::refused,
+                    "Git already has a worktree registered at " +
+                        target.string() + " although its directory is gone; " +
+                        forget + " forgets it");
     }
     if (exists) {
         throw Error(ErrorKind::refused,

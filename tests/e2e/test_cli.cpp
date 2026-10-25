@@ -363,6 +363,27 @@ TEST_CASE("wt list warns when a worktree's status can't be read") {
                                  broken.string()));
 }
 
+TEST_CASE("wt list doesn't call a path with something else at it missing") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = box.work() / "repo.worktrees" / "replaced";
+    git(box, repo, {"worktree", "add", "-q", "-b", "replaced", path.string()});
+    fs::remove_all(path);
+
+    SECTION("file") {
+        write_file(path, "keep me");
+    }
+    SECTION("dangling symlink") {
+        fs::create_directory_symlink(box.work() / "nowhere", path);
+    }
+
+    auto r = run_wt(box, repo, {"list"});
+    CHECK(r.code == 0);
+    CHECK_THAT(row_for(r.out, path.string()), ContainsSubstring(" unknown "));
+    CHECK(r.err == "wt: warning: cannot read the status of " + path.string() +
+                       ": it is not a directory\n");
+}
+
 TEST_CASE("wt list handles a bare repository") {
     Sandbox box;
     const fs::path repo = make_repo(box, box.work() / "repo");
@@ -977,8 +998,21 @@ TEST_CASE("wt new refuses a path Git still has registered") {
     auto r = run_wt(box, repo, {"new", "feature"});
     CHECK(r.code == 2);
     CHECK_THAT(r.err, ContainsSubstring("already has a worktree registered") &&
-                          ContainsSubstring("run `git worktree prune`"));
+                          EndsWith("`git worktree prune` forgets it\n"));
     CHECK_FALSE(fs::exists(target));
+}
+
+TEST_CASE("wt new names the task to remove when its path is registered") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    // Both tasks map to the same folder, so the second finds the first's.
+    const fs::path target = wt_new(box, repo, "a/b");
+    fs::remove_all(target);
+
+    auto r = run_wt(box, repo, {"new", "a-b"});
+    CHECK(r.code == 2);
+    CHECK_THAT(r.err, EndsWith("although its directory is gone; "
+                               "`wt remove a/b` forgets it\n"));
 }
 
 TEST_CASE("wt new refuses a container it can't prove it owns") {
@@ -1379,8 +1413,42 @@ TEST_CASE("wt status reports a worktree whose directory was deleted") {
     CHECK(field(r.out, "Status:") == "Status:       missing");
     CHECK_THAT(r.out, !ContainsSubstring("Staged:"));
     CHECK(field(r.out, "Ahead main:") == "Ahead main:   1");
-    CHECK_THAT(r.err,
-               StartsWith("wt: warning: the worktree's directory is gone"));
+    CHECK(r.err ==
+          "wt: warning: the worktree's directory is gone; if it was moved, "
+          "`git worktree repair <new-path>` reconnects it, otherwise "
+          "`wt remove gone` makes Git forget it and keeps the branch\n");
+}
+
+TEST_CASE("wt status says a locked worktree whose directory is gone is kept") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "offline");
+    git(box, repo,
+        {"worktree", "lock", "--reason", "on a USB drive", path.string()});
+    fs::remove_all(path);
+
+    auto r = run_wt(box, repo, {"status", "offline"});
+    CHECK(r.code == 0);
+    CHECK(field(r.out, "Status:") == "Status:       missing");
+    CHECK(r.err ==
+          "wt: warning: the worktree's directory is gone, but it is locked, "
+          "so Git keeps its record; if it's no longer needed, unlock it with "
+          "`git worktree unlock " +
+              path.string() + "`\n");
+}
+
+TEST_CASE("wt status fails when something else is at the worktree's path") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "replaced");
+    fs::remove_all(path);
+    write_file(path, "keep me");
+
+    auto r = run_wt(box, repo, {"status", "replaced"});
+    CHECK(r.code == 1);
+    CHECK(field(r.out, "Status:") == "Status:       unknown");
+    CHECK(r.err == "wt: error: cannot read the status of " + path.string() +
+                       ": it is not a directory\n");
 }
 
 TEST_CASE("wt status fails when the worktree's status can't be read") {
@@ -2815,6 +2883,38 @@ TEST_CASE("wt merge refuses when the task has uncommitted changes") {
           "(`wt status feature` shows them)\n");
     CHECK(head_of(box, repo) == before);
     CHECK(read_file(path / "forgotten.txt") == "not committed\n");
+}
+
+TEST_CASE("wt merge lands a task whose directory was deleted") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature");
+    commit_file(box, path, "a.txt", "a\n");
+    fs::remove_all(path);
+
+    // Its commits are all on the branch, so nothing is left behind.
+    auto r = run_wt(box, repo, {"merge", "feature"});
+    CHECK(r.code == 0);
+    CHECK(r.out == "✓ Merged feature into main\n");
+    CHECK(read_file(repo / "a.txt") == "a\n");
+}
+
+TEST_CASE("wt merge refuses when something else is at the task's path") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature");
+    commit_file(box, path, "a.txt", "a\n");
+    fs::remove_all(path);
+    write_file(path, "keep me");
+    const std::string before = head_of(box, repo);
+
+    auto r = run_wt(box, repo, {"merge", "feature"});
+    CHECK(r.code == 2);
+    CHECK(r.out.empty());
+    CHECK(r.err == "wt: refused: cannot read the status of " + path.string() +
+                       ": it is not a directory\n");
+    CHECK(head_of(box, repo) == before);
+    CHECK(read_file(path) == "keep me");
 }
 
 TEST_CASE("wt merge refuses a task that is being rebased") {

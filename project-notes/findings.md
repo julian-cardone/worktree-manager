@@ -4,7 +4,12 @@
 
 Known gaps that still need action.
 
-None right now.
+### `wt remove` can't tell a deleted worktree from a moved or unmounted one
+
+When nothing is at a worktree's path, `wt remove` (and `wt merge --cleanup`) forgets Git's record of it, as `git worktree remove` does.
+If the directory was actually moved by hand, or is on a drive that isn't mounted and the worktree isn't locked, that orphans it: its files survive, but its index (staged changes) and any in-progress operation state lived in Git's record and are deleted, and `git worktree repair` can no longer reconnect it.
+`wt status` now warns about this and suggests `git worktree repair <new-path>`, but `wt remove` itself doesn't.
+Needs a decision: keep this, mention `git worktree repair` in `wt remove`'s output, or refuse to forget a missing worktree that has staged changes or operation state recorded.
 
 ## Addressed
 
@@ -25,6 +30,12 @@ Refusals are intended to preserve uncertain or valuable state and provide a safe
 `--delete-ignored` is deliberately narrow: it authorizes only ignored-file deletion and bypasses no other safety check.
 A general force mode should not be added speculatively.
 Reconsider it only if repeated real-world use demonstrates a concrete workflow that cannot be supported safely through more specific behavior.
+
+### Something other than a directory at a worktree's path isn't missing
+
+`wt` used to call a worktree `missing` whenever its path wasn't a directory, including when a file or dangling symlink had replaced it.
+`wt merge` treats a missing task worktree as having nothing left to lose, so it landed such a task without question.
+Only a path with nothing at it is now `missing`; anything else is `unknown`, which `wt status` and `wt merge` refuse to treat as safe.
 
 ### `git worktree remove` follows a symlink at the worktree path
 
