@@ -1949,22 +1949,53 @@ TEST_CASE("wt remove refuses a locked worktree") {
     check_untouched(box, repo, path, "feature");
 }
 
-TEST_CASE("wt remove refuses a worktree in the middle of a merge") {
+// Stops `git am` in the worktree at `dir` on a patch to a file that isn't
+// there, which leaves the branch checked out and the files clean.
+void stop_git_am(const Sandbox& box, const fs::path& dir) {
+    const fs::path patch = box.work() / "missing.patch";
+    write_file(patch,
+               "From 0000000000000000000000000000000000000000 Mon Sep 17 "
+               "00:00:00 2001\n"
+               "From: Test <test@example.com>\n"
+               "Subject: [PATCH] Change a missing file\n"
+               "\n"
+               "---\n"
+               "diff --git a/missing.txt b/missing.txt\n"
+               "--- a/missing.txt\n"
+               "+++ b/missing.txt\n"
+               "@@ -1 +1 @@\n"
+               "-old\n"
+               "+new\n");
+    const Result r =
+        run_in(box, dir, {find_on_path("git"), "am", "-q", patch.string()});
+    REQUIRE(r.code != 0);
+    REQUIRE(git_output(box, dir, {"status", "--porcelain"}).empty());
+}
+
+TEST_CASE("wt remove refuses a worktree in the middle of an operation") {
     Sandbox box;
     const fs::path repo = make_repo(box, box.work() / "repo");
     const fs::path path = wt_new(box, repo, "feature");
-    commit_file(box, repo, "a.txt", "a\n");
-    // "ours" keeps the files as they are, so only MERGE_HEAD shows the merge.
-    git(box, path, {"merge", "-q", "--no-commit", "-s", "ours", "main"});
-    REQUIRE(git_output(box, path, {"status", "--porcelain"}).empty());
+    std::string operation;
+    SECTION("a merge") {
+        commit_file(box, repo, "a.txt", "a\n");
+        // "ours" keeps the files as they are, so only MERGE_HEAD shows it.
+        git(box, path, {"merge", "-q", "--no-commit", "-s", "ours", "main"});
+        REQUIRE(git_output(box, path, {"status", "--porcelain"}).empty());
+        operation = "a merge";
+    }
+    SECTION("a git am") {
+        stop_git_am(box, path);
+        operation = "a git am";
+    }
 
     auto r = run_wt(box, repo, {"remove", "feature"});
     CHECK(r.code == 2);
     CHECK(r.out.empty());
-    CHECK(
-        r.err ==
-        "wt: refused: the worktree for 'feature' is in the middle of a merge; "
-        "finish or abort it first\n");
+    CHECK(r.err ==
+          "wt: refused: the worktree for 'feature' is in the middle "
+          "of " +
+              operation + "; finish or abort it first\n");
     check_untouched(box, repo, path, "feature");
 }
 
@@ -2411,20 +2442,95 @@ TEST_CASE("wt merge refuses when main's worktree isn't clean") {
     CHECK_FALSE(fs::exists(repo / "a.txt"));
 }
 
-TEST_CASE("wt merge refuses when main is in the middle of another merge") {
+TEST_CASE("wt merge refuses when main is in the middle of an operation") {
     Sandbox box;
     const fs::path repo = make_repo(box, box.work() / "repo");
     const fs::path path = wt_new(box, repo, "feature");
     commit_file(box, path, "a.txt", "a\n");
-    // A merge whose changes are already resolved can leave the files clean.
-    write_file(repo / ".git" / "MERGE_HEAD", head_of(box, path) + "\n");
+    // Each of these can leave main checked out and its files clean.
+    std::string operation;
+    SECTION("a merge") {
+        // A merge whose changes are already resolved.
+        write_file(repo / ".git" / "MERGE_HEAD", head_of(box, path) + "\n");
+        operation = "a merge";
+    }
+    SECTION("a git am") {
+        stop_git_am(box, repo);
+        operation = "a git am";
+    }
+    SECTION("a cherry-pick or revert between steps") {
+        // What a multi-commit cherry-pick leaves once a conflicted step has
+        // been committed: no CHERRY_PICK_HEAD, only the remaining steps.
+        fs::create_directory(repo / ".git" / "sequencer");
+        write_file(repo / ".git" / "sequencer" / "todo",
+                   "pick " + head_of(box, path) + "\n");
+        operation = "a cherry-pick or revert";
+    }
+    SECTION("a bisect") {
+        git(box, repo, {"bisect", "start"});
+        operation = "a bisect";
+    }
     const std::string before = head_of(box, repo);
 
     auto r = run_wt(box, repo, {"merge", "feature"});
     CHECK(r.code == 2);
     CHECK(r.err == "wt: refused: main's worktree at " + repo.string() +
-                       " is in the middle of a merge; finish or abort it "
-                       "first\n");
+                       " is in the middle of " + operation +
+                       "; finish or abort it first\n");
+    CHECK(head_of(box, repo) == before);
+}
+
+TEST_CASE("wt merge refuses when main is being rebased") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature");
+    commit_file(box, path, "a.txt", "a\n");
+    commit_file(box, repo, "b.txt", "b\n");
+    const std::string main_before = head_of(box, repo);
+    // Detaches main's worktree, so main looks checked out nowhere.
+    const Result rebase = run_in(
+        box, repo,
+        {find_on_path("git"), "rebase", "-q", "--exec", "false", "HEAD~1"});
+    REQUIRE(rebase.code != 0);
+
+    auto r = run_wt(box, repo, {"merge", "feature"});
+    CHECK(r.code == 2);
+    CHECK(r.out.empty());
+    CHECK(r.err ==
+          "wt: refused: the integration branch 'main' is being "
+          "rebased in " +
+              repo.string() +
+              "; finish or abort the rebase, then merge again\n");
+    CHECK(git_output(box, repo, {"rev-parse", "main"}) == main_before);
+}
+
+TEST_CASE("wt merge refuses when the task is in the middle of an operation") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature");
+    commit_file(box, path, "a.txt", "a\n");
+    // Each leaves the task's files clean and its branch checked out, but
+    // without the work the operation is still adding.
+    std::string operation;
+    SECTION("a merge") {
+        commit_file(box, repo, "b.txt", "b\n");
+        git(box, path, {"merge", "-q", "--no-commit", "-s", "ours", "main"});
+        REQUIRE(git_output(box, path, {"status", "--porcelain"}).empty());
+        operation = "a merge";
+    }
+    SECTION("a git am") {
+        stop_git_am(box, path);
+        operation = "a git am";
+    }
+    const std::string before = head_of(box, repo);
+
+    auto r = run_wt(box, repo, {"merge", "feature"});
+    CHECK(r.code == 2);
+    CHECK(r.out.empty());
+    CHECK(r.err ==
+          "wt: refused: the worktree for 'feature' is in the middle "
+          "of " +
+              operation + "; finish or abort it, then merge again\n");
     CHECK(head_of(box, repo) == before);
 }
 

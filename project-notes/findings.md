@@ -66,6 +66,12 @@ It now reads each worktree's rebase state (`rebase-merge`/`rebase-apply` `head-n
 Until the rebase finishes, such a branch still points at its old commits and isn't checked out anywhere, so `wt merge` landed its pre-rebase commits and `--cleanup` then failed in `git branch -d`, which, like the rest of Git, treats the branch as in use.
 The rebase-state check now also reads `update-refs` (as Git itself does) and refuses for a branch listed there, and refuses when the file can't be parsed.
 
+### Some stopped operations leave no ref and no changes
+
+`git am` stopped on a patch, a multi-commit cherry-pick or revert between steps, and a bisect leave the branch checked out and the files clean, with only files in the worktree's Git directory (`rebase-apply`, `sequencer`, `BISECT_LOG`) to show it.
+`wt` looked only for `MERGE_HEAD`, `CHERRY_PICK_HEAD`, and `REVERT_HEAD`, so `wt merge` merged into `main` mid-`git am` (after which `git am --abort` refused to rewind), and landed a task whose own worktree was mid-operation.
+`wt` now also checks those paths (via `git rev-parse --git-path`, as `git status` does), and `wt merge` requires the task's worktree, like the integration branch's, to be clean and idle.
+
 ### Merging `main` into a task makes `main`'s history run backwards
 
 When a task has merged `main` in, landing it fast-forwards, so `main`'s first-parent history goes through "Merge branch 'main' into …".

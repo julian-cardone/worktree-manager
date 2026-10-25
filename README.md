@@ -231,9 +231,9 @@ If the integration branch already has every commit on `<task>`, it says so and d
 
 **It refuses, and changes nothing, if:**
 
-- the integration branch's worktree has staged, modified, or untracked files, or is in the middle of a merge, cherry-pick, or revert;
-- the task's worktree has uncommitted changes, since the merge wouldn't include them (a task branch with no worktree merges fine);
-- `<task>` is in the middle of a rebase in any worktree, or a `git rebase --update-refs` there will move it, since its branch still points at the commits being rewritten;
+- the integration branch's worktree has staged, modified, or untracked files, or is in the middle of a merge, rebase, `git am`, cherry-pick, revert, or bisect, even with clean files;
+- the task's worktree has uncommitted changes, since the merge wouldn't include them, or is in the middle of one of those operations, since its branch may not hold the finished work yet (a task branch with no worktree merges fine);
+- `<task>` or the integration branch is in the middle of a rebase in any worktree, or a `git rebase --update-refs` there will move `<task>`, since its branch still points at the commits being rewritten;
 - `merge.ff` is set to `only` and `<task>` is behind the integration branch (see below);
 - the merge would overwrite ignored files in the integration branch's worktree, i.e. the task's branch adds a file where one is ignored (such as `.env`), which Git would otherwise replace silently;
 - the integration branch isn't checked out in any worktree, or `<task>` is the integration branch.
@@ -376,7 +376,7 @@ Git itself deletes ignored files (such as `.env` files or build output) with the
 - a locked worktree (`git worktree unlock` it first);
 - a worktree path that is a symlink or a file rather than a directory, since Git would follow a symlink and delete what it points to;
 - a worktree whose status can't be read;
-- a worktree in the middle of a merge, cherry-pick, or revert, even with clean files, since that state is deleted with it.
+- a worktree in the middle of a merge, rebase, `git am`, cherry-pick, revert, or bisect, even with clean files, since that state is deleted with it.
 
 **If the worktree's directory is already gone**, `wt remove` only removes Git's record of it, and says so.
 This also works if the whole container was deleted.

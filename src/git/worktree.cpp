@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <fstream>
 #include <iterator>
+#include <sstream>
 #include <system_error>
 #include <utility>
 
@@ -277,16 +278,58 @@ std::optional<fs::path> rebasing_worktree(
     return std::nullopt;
 }
 
+// WARNING: Git keeps most of this state as files, not refs, and `git am` and
+// a cherry-pick or revert between steps leave the branch checked out and the
+// files clean. Reads the paths Git itself checks, as `git status` does.
 std::optional<std::string> operation_in_progress(const fs::path& dir) {
-    const std::pair<const char*, const char*> kOperations[] = {
+    const std::pair<const char*, const char*> kHeads[] = {
         {"MERGE_HEAD", "a merge"},
         {"CHERRY_PICK_HEAD", "a cherry-pick"},
         {"REVERT_HEAD", "a revert"},
     };
-    for (const auto& [ref, what] : kOperations) {
+    for (const auto& [ref, what] : kHeads) {
         if (resolve_commit(dir, ref)) {
             return what;
         }
+    }
+
+    // rebase-apply holds `git am`'s state too; "applying" tells them apart.
+    const std::pair<const char*, const char*> kStates[] = {
+        {"rebase-merge", "a rebase"}, {"rebase-apply/applying", "a git am"},
+        {"rebase-apply", "a rebase"}, {"sequencer", "a cherry-pick or revert"},
+        {"BISECT_LOG", "a bisect"},
+    };
+    std::vector<std::string> args = {"rev-parse"};
+    for (const auto& [path, what] : kStates) {
+        args.insert(args.end(), {"--git-path", path});
+    }
+    const Result r = run(dir, args);
+    if (r.exit_code != 0) {
+        throw wt::Error(
+            ErrorKind::refused,
+            "cannot check whether " + dir.string() +
+                " is in the middle of an operation: " + error_message(r.err));
+    }
+    std::istringstream lines(r.out);
+    for (const auto& [path, what] : kStates) {
+        std::string line;
+        if (!std::getline(lines, line)) {
+            throw wt::Error(ErrorKind::internal,
+                            "unexpected output from git rev-parse --git-path");
+        }
+        // Relative paths are relative to the directory Git ran in.
+        const fs::path state = dir / line;
+        std::error_code ec;
+        const auto type = fs::symlink_status(state, ec).type();
+        if (type == fs::file_type::not_found) {
+            continue;
+        }
+        if (ec) {
+            throw wt::Error(
+                ErrorKind::refused,
+                "cannot inspect " + state.string() + ": " + ec.message());
+        }
+        return what;
     }
     return std::nullopt;
 }

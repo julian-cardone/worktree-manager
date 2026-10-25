@@ -76,8 +76,9 @@ std::optional<std::filesystem::path> rebasing_worktree(
     std::string_view branch);
 
 // The operation Git has stopped in the middle of in the worktree at `dir`,
-// e.g. "a merge", or nothing. These can leave the files clean, so a clean
-// status alone doesn't mean the worktree is idle.
+// e.g. "a merge" or "a git am", or nothing. These can leave the files clean,
+// so a clean status alone doesn't mean the worktree is idle. Throws a refused
+// wt::Error if that can't be determined.
 std::optional<std::string> operation_in_progress(
     const std::filesystem::path& dir);
 

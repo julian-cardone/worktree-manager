@@ -99,11 +99,15 @@ void check_destination(const git::Worktree& dest, const std::string& base) {
 }
 
 // Fails if the task's worktree has changes the merge would leave out, which
-// is almost always work someone forgot to commit.
+// is almost always work someone forgot to commit, or is in the middle of an
+// operation, so its branch may not hold the finished work yet.
+// WARNING: wt merges only from a clean, idle worktree; anything else makes
+// what gets landed ambiguous.
 void check_source(const git::Worktree& source, const std::string& task) {
     const auto status = git::worktree_status(source);
     switch (status.status) {
         case git::Status::clean:
+            break;
         // Its commits are all on the branch; only the directory is gone.
         case git::Status::missing:
             return;
@@ -119,6 +123,11 @@ void check_source(const git::Worktree& source, const std::string& task) {
             throw Error(ErrorKind::refused, "cannot read the status of " +
                                                 source.path.string() + ": " +
                                                 status.detail);
+    }
+    if (auto operation = git::operation_in_progress(source.path)) {
+        throw Error(ErrorKind::refused,
+                    "the worktree for '" + task + "' is in the middle of " +
+                        *operation + "; finish or abort it, then merge again");
     }
 }
 
@@ -561,6 +570,15 @@ int merge_command(const Context& ctx, const std::string& task, bool cleanup,
     // that exists rather than switching some worktree over to it.
     const git::Worktree* dest = find_branch_worktree(worktrees, base);
     if (dest == nullptr) {
+        // Mid-rebase, its worktree is detached, so it looks checked out
+        // nowhere.
+        if (const auto where = git::rebasing_worktree(
+                worktrees, git::common_dir(ctx.repo), base)) {
+            throw Error(ErrorKind::refused,
+                        "the integration branch '" + base +
+                            "' is being rebased in " + where->string() +
+                            "; finish or abort the rebase, then merge again");
+        }
         throw Error(ErrorKind::user, "the integration branch '" + base +
                                          "' isn't checked out in any "
                                          "worktree; check it out to merge "
