@@ -62,6 +62,18 @@ All development on this repository must exercise `wt` as the intended worktree w
 - Record significant product, architecture, safety, reliability, performance, or usability findings in `project-notes/findings.md`, and surface important findings to me when discovered.
 - Do not log routine successful commands or generate unnecessary noise.
 
+### Landing tasks: linear `main`
+
+This repository keeps `main` linear: every task lands as a fast-forward, with no merge commits.
+This is a policy for this repository only; `wt` itself follows each repository's Git settings and must not impose it on other users.
+
+- The repository is configured with `git config merge.ff only`, so `wt merge` lands a task only by fast-forwarding. Check it is still set before landing; set it again if not.
+- Several tasks may be in progress at once. Land each with `wt merge <task>` when it is finished.
+- If `wt merge` refuses because the task is behind `main`, run `git rebase main` in that task's own worktree, resolve any conflicts there (`git add`, then `git rebase --continue`), rerun the tests, then rerun `wt merge`.
+- Never merge `main` into a task branch, and never pass a branch name to `git rebase` (e.g. `git rebase main <task>`), since that checks the branch out in the current worktree.
+- Keep a task's worktree until `wt merge` has landed it; only then clean up with `wt remove`. `wt` can't give an existing branch a new worktree, so a task removed early can't be rebased.
+- Landed task branches are kept and accumulate until a human deletes them (`git branch -d`). This is known cleanup friction, not a reason to stop.
+
 The purpose of these rules is to continuously exercise `wt` through real development so its worktree-lifecycle limitations and friction are discovered rather than bypassed.
 
 ## 5. Code Quality & Documentation

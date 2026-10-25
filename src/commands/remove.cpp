@@ -7,6 +7,7 @@
 #include "layout/container.hpp"
 #include "ui/format.hpp"
 
+#include <algorithm>
 #include <filesystem>
 #include <ostream>
 #include <sstream>
@@ -59,27 +60,43 @@ void add_count(std::vector<std::string>& lines, std::size_t count,
     }
 }
 
-// Explains what removal would destroy, on stderr.
+// Explains what removal would destroy, on stderr. Ignored files are named,
+// not just counted, so deciding to pass --delete-ignored means having seen
+// whether something like a .env file is among them.
 void report_blocked(const Context& ctx, const std::string& task,
                     const git::Changes& changes, bool show_ignored) {
+    // Enough to spot what matters without flooding the terminal.
+    constexpr std::size_t kMaxIgnoredShown = 10;
+
     std::vector<std::string> lines;
     add_count(lines, changes.staged, "staged");
     add_count(lines, changes.modified, "modified");
     add_count(lines, changes.untracked, "untracked");
     add_count(lines, changes.conflicts, "conflicted");
     if (show_ignored) {
-        add_count(lines, changes.ignored, "ignored");
+        add_count(lines, changes.ignored.size(), "ignored");
     }
 
     ctx.err << "wt: error: cannot remove " << ui::printable(task) << "\n\n";
     for (const auto& line : lines) {
         ctx.err << "  " << line << '\n';
     }
+    if (show_ignored) {
+        const std::size_t shown =
+            std::min(changes.ignored.size(), kMaxIgnoredShown);
+        for (std::size_t i = 0; i < shown; ++i) {
+            ctx.err << "    " << ui::printable(changes.ignored[i]) << '\n';
+        }
+        if (changes.ignored.size() > shown) {
+            ctx.err << "    ... and " << changes.ignored.size() - shown
+                    << " more\n";
+        }
+    }
     ctx.err << '\n';
     if (!changes.empty()) {
         ctx.err << "Commit, stash, or remove these changes first.\n";
     }
-    if (show_ignored && changes.ignored != 0) {
+    if (show_ignored && !changes.ignored.empty()) {
         ctx.err << "Ignored files are deleted with the worktree; move any you "
                    "need, then rerun with --delete-ignored.\n";
     }
@@ -159,7 +176,7 @@ int remove_command(const Context& ctx, const std::string& task,
         case git::Status::clean:
         case git::Status::dirty: {
             const bool ignored_block =
-                status.changes.ignored != 0 && !delete_ignored;
+                !status.changes.ignored.empty() && !delete_ignored;
             if (!status.changes.empty() || ignored_block) {
                 report_blocked(ctx, task, status.changes, !delete_ignored);
                 return 1;

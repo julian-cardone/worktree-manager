@@ -61,7 +61,7 @@ git ls-files '*.cpp' '*.hpp' | xargs clang-format -i
 | `wt list` | List every worktree of the current repository with its branch, status, and path. |
 | `wt new <task>` | Create branch `<task>` from the integration branch in a new worktree, and print its path. |
 | `wt status <task>` | Summarize the task's worktree: HEAD, uncommitted changes, and commits ahead of or behind the integration branch. |
-| `wt merge <task>` | Merge the task's branch into the integration branch; on a conflict, abort and list the conflicting files. |
+| `wt merge <task>` | Merge the task's branch into the integration branch, following Git's merge settings; on a conflict, abort and list the conflicting files. |
 | `wt remove <task>` | Remove the task's worktree if nothing uncommitted would be lost. The branch is kept. |
 
 The version is set by `project(wt VERSION ...)` in `CMakeLists.txt`.
@@ -190,6 +190,7 @@ $ wt merge feature-x
 ```
 
 Merges branch `<task>` into the integration branch (chosen as for `wt new`) with a normal `git merge`, which fast-forwards when it can.
+`wt` doesn't choose a merge strategy: Git's own settings, such as `merge.ff`, decide whether a merge commit is made.
 The merge happens in the worktree that has the integration branch checked out, usually the main checkout; `wt` never switches a worktree to it.
 It works from the main checkout or any other worktree of the repository, including the task's own.
 The task's worktree and branch are always kept; remove them yourself with `wt remove` and `git branch -d`.
@@ -199,6 +200,8 @@ If the integration branch already has every commit on `<task>`, it says so and d
 
 - the integration branch's worktree has staged, modified, or untracked files, or is in the middle of a merge, cherry-pick, or revert;
 - the task's worktree has uncommitted changes, since the merge wouldn't include them (a task branch with no worktree merges fine);
+- `<task>` is in the middle of a rebase in any worktree, since its branch still points at the commits being rewritten;
+- `merge.ff` is set to `only` and `<task>` is behind the integration branch (see below);
 - the merge would overwrite ignored files in the integration branch's worktree, i.e. the task's branch adds a file where one is ignored (such as `.env`), which Git would otherwise replace silently;
 - the integration branch isn't checked out in any worktree, or `<task>` is the integration branch.
 
@@ -216,11 +219,30 @@ main was restored; no merge remains in progress.
 ```
 
 It never resolves conflicts itself.
-To land the task, bring the integration branch into the task (for example `git merge main` in its worktree), resolve the conflicts there, and run `wt merge` again.
+Resolve them in the task's worktree, then run `wt merge` again.
+Rebasing the task onto the integration branch (`git rebase main` in its worktree) keeps the integration branch's history linear.
+Merging the integration branch into the task instead (`git merge main`) also works, but the landing then fast-forwards, so the integration branch's history runs through a "Merge branch 'main' into …" commit; set `merge.ff` to `false` if you work this way.
+
+**For a linear history**, set `git config merge.ff only`.
+`wt merge` then lands a task only by fast-forwarding, and if the task is behind, refuses before touching anything and says how to rebase it:
+
+```
+$ wt merge feature-x
+wt: error: cannot fast-forward main to feature-x
+
+feature-x is 2 commits behind main, and merge.ff is set to "only".
+Rebase it onto main in its worktree, resolving any conflicts there:
+
+  git -C /Users/me/Dev/.worktree-manager.wt-a13f92c4/feature-x rebase main
+
+Then run `wt merge feature-x` again.
+```
+
+While that rebase is in progress, `wt merge` refuses the task until it is finished or aborted.
 
 The clean-worktree check is what makes the abort safe: `git merge --abort` can only restore a worktree that had no uncommitted changes before the merge.
 If Git stops mid-merge for another reason, such as a hook rejecting the merge commit, `wt merge` aborts the same way and shows Git's output.
-If Git refuses to start the merge (for example, `merge.ff` is `only` and the branches have diverged), it shows Git's output and nothing is changed.
+If Git refuses to start the merge (for example, because of a branch's `mergeOptions`), it shows Git's output and nothing is changed.
 If the abort or the check after it fails, `wt merge` says what is wrong and where to look with `git status`.
 All failures exit 1.
 
@@ -248,14 +270,17 @@ It works from the main checkout or any other worktree of the repository.
 $ wt remove feature-x
 wt: error: cannot remove feature-x
 
-  2 modified files
   1 untracked file
+  2 ignored files
+    .env
+    build/
 
 Commit, stash, or remove these changes first.
+Ignored files are deleted with the worktree; move any you need, then rerun with --delete-ignored.
 ```
 
 Counts follow `git status`: an untracked or ignored directory counts once.
-Git itself deletes ignored files (such as `.env` files or build output) with the worktree, so `wt` treats them as something to lose too.
+Git itself deletes ignored files (such as `.env` files or build output) with the worktree, so `wt` treats them as something to lose too, and names them (up to 10) so you can check what `--delete-ignored` would delete.
 `--delete-ignored` lets them be deleted, but never overrides any other check.
 `wt` never passes `--force` to Git, so Git's own check for modified and untracked files still applies.
 

@@ -57,6 +57,42 @@ std::optional<std::string> operation_in_progress(const fs::path& dir) {
     return std::nullopt;
 }
 
+// Reports whether Git is configured to merge only by fast-forwarding, as
+// `git config merge.ff only` does in repositories that keep a linear history.
+bool fast_forward_only(const fs::path& dir) {
+    const git::Result r = git::run(dir, {"config", "--get", "merge.ff"});
+    if (r.exit_code == kNotFound) {
+        return false;
+    }
+    if (r.exit_code != 0) {
+        throw git::Error(git::error_message(r.err));
+    }
+    return r.out.substr(0, r.out.find('\n')) == "only";
+}
+
+// Explains, on stderr, that `task` must be rebased before it can land.
+void report_behind(const Context& ctx, const std::string& task,
+                   const std::string& base, std::size_t behind,
+                   const git::Worktree* source) {
+    const std::string shown_task = ui::printable(task);
+    const std::string shown_base = ui::printable(base);
+    ctx.err << "wt: error: cannot fast-forward " << shown_base << " to "
+            << shown_task << "\n\n"
+            << shown_task << " is " << behind
+            << (behind == 1 ? " commit" : " commits") << " behind "
+            << shown_base << ", and merge.ff is set to \"only\".\n";
+    if (source != nullptr) {
+        ctx.err << "Rebase it onto " << shown_base
+                << " in its worktree, resolving any conflicts there:\n\n"
+                << "  git -C " << ui::printable(source->path.string())
+                << " rebase " << shown_base << "\n\n";
+    } else {
+        ctx.err << shown_task << " has no worktree; rebase it onto "
+                << shown_base << " wherever you check it out.\n";
+    }
+    ctx.err << "Then run `wt merge " << shown_task << "` again.\n";
+}
+
 // Fails unless the integration branch's worktree can take a merge and, if it
 // fails, be put back exactly as it was.
 // WARNING: `git merge --abort` only restores a worktree that was clean before
@@ -218,6 +254,15 @@ int merge_command(const Context& ctx, const std::string& task) {
                                  "nothing to merge it into");
     }
 
+    // Mid-rebase, the branch still points at the commits being rewritten.
+    if (const auto where =
+            git::rebasing_worktree(worktrees, git::common_dir(ctx.cwd), task)) {
+        throw std::runtime_error(
+            "'" + task + "' is being rebased in " + where->string() +
+            "; finish the rebase (`git rebase --continue`) or abort it (`git "
+            "rebase --abort`), then merge again");
+    }
+
     // Merging needs a checkout of the integration branch. wt uses the one
     // that exists rather than switching some worktree over to it.
     const git::Worktree* dest = find_branch_worktree(worktrees, base);
@@ -227,17 +272,24 @@ int merge_command(const Context& ctx, const std::string& task) {
                                  "check it out to merge into it");
     }
     check_destination(*dest, base);
-    if (const auto* source = find_branch_worktree(worktrees, task)) {
+    const git::Worktree* source = find_branch_worktree(worktrees, task);
+    if (source != nullptr) {
         check_source(*source, task);
     }
 
     const std::string shown_task = ui::printable(task);
     const std::string shown_base = ui::printable(base);
-    if (git::divergence(ctx.cwd, "refs/heads/" + task, "refs/heads/" + base)
-            .ahead == 0) {
+    const auto divergence =
+        git::divergence(ctx.cwd, "refs/heads/" + task, "refs/heads/" + base);
+    if (divergence.ahead == 0) {
         ctx.out << shown_base << " already contains " << shown_task
                 << "; nothing to merge\n";
         return 0;
+    }
+    // Git would refuse too, but without saying how to get the task landed.
+    if (divergence.behind != 0 && fast_forward_only(dest->path)) {
+        report_behind(ctx, task, base, divergence.behind, source);
+        return 1;
     }
 
     const auto before = resolve(dest->path, "HEAD");

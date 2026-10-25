@@ -8,12 +8,14 @@ Agents must use `wt`, not Git, for the worktree lifecycle (`AGENTS.md` section 4
 Only gaps inside `wt`'s product boundary belong here; remove an item once `wt` covers it.
 
 - **Delete a merged branch**: `wt merge` lands a task and `wt remove` removes its worktree, but `wt` can't delete the merged branch, so finished task branches accumulate.
+  This is cleanup friction, not a correctness problem, and doesn't block using `wt`.
   Cleanup needs a human running `git branch -d`; whether `wt` should do this, and with what safeguards, is an open question in `findings.md`.
-- **Land a task that conflicts with the integration branch**: `wt merge` aborts on any conflict, and resolving it on `main` would need a raw `git merge`.
-  The workaround, merging `main` into the task branch, put a backwards "Merge branch 'main' into ..." commit on `main` once it fast-forwarded.
-  For now, resolve in a fresh `wt new` worktree (e.g. `git restore --source=<task> <files>` and commit as one squashed change), then `wt merge` it.
+- **Give an existing branch a worktree**: `wt new` only creates new branches, so a task whose worktree was removed before it landed can't be rebased onto `main` through `wt`.
+  Deliberately not solved yet: the workflow keeps a task's worktree until it lands (`AGENTS.md`).
+  If removing a worktree too early happens repeatedly, that justifies something like `wt attach <branch>` or extending `wt new`; note each occurrence here.
 
 ## Build directories always need `--delete-ignored`
 
 Every task worktree here has an ignored `build/` directory, so `wt remove` refuses until rerun with `--delete-ignored`.
 The refusal is intended, but it makes the flag routine, which weakens it as a guard for ignored files that matter (e.g. `.env`).
+`wt remove` now lists the ignored entries it would delete, so the flag is at least an informed choice; a configurable list of disposable paths was deferred until this proves insufficient.

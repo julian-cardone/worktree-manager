@@ -22,13 +22,13 @@ enum class Status { clean, dirty, bare, missing, unknown };
 
 // Uncommitted changes, counted the way `git status` lists them: a file with
 // both staged and unstaged changes counts in both, and an untracked or ignored
-// directory counts once.
+// directory counts once (ignored ones are listed with a trailing '/').
 struct Changes {
     std::size_t staged = 0;
     std::size_t modified = 0;  // unstaged changes to tracked files
     std::size_t untracked = 0;
     std::size_t conflicts = 0;
-    std::size_t ignored = 0;  // only counted when asked for
+    std::vector<std::string> ignored;  // only listed when asked for
 
     // Ignored files aren't changes, so they don't count here.
     bool empty() const {
@@ -61,8 +61,17 @@ std::optional<std::size_t> find_worktree_containing(
 bool worktree_contains(const Worktree& worktree,
                        const std::filesystem::path& dir);
 
+// The worktree in which `branch` (a short name) is being rebased, if any.
+// Mid-rebase, the worktree is detached and the branch still points at its old
+// commits, so nothing in `git worktree list` shows the branch is in use.
+// `common` is the repository's shared Git directory. Throws Error if a
+// worktree's rebase state can't be read.
+std::optional<std::filesystem::path> rebasing_worktree(
+    const std::vector<Worktree>& worktrees, const std::filesystem::path& common,
+    std::string_view branch);
+
 // Reports whether the worktree has uncommitted changes, including untracked
-// files, and counts them; with `count_ignored`, also counts ignored files.
+// files, and counts them; with `count_ignored`, also lists ignored files.
 // Never modifies the worktree or its index.
 StatusResult worktree_status(const Worktree& worktree,
                              bool count_ignored = false);

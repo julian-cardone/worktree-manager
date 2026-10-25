@@ -3,6 +3,7 @@
 #include "git/git.hpp"
 
 #include <algorithm>
+#include <fstream>
 #include <iterator>
 #include <system_error>
 
@@ -104,7 +105,7 @@ Changes parse_status(std::string_view porcelain) {
                 ++changes.untracked;
                 break;
             case '!':  // only listed with --ignored
-                ++changes.ignored;
+                changes.ignored.emplace_back(entry.substr(2));
                 break;
             case '#':  // headers, e.g. from --branch
                 break;
@@ -167,6 +168,74 @@ std::optional<std::size_t> find_worktree_containing(
 
 bool worktree_contains(const Worktree& worktree, const fs::path& dir) {
     return within(worktree.path, resolve(dir));
+}
+
+namespace {
+
+// The first line of the file at `path`, or nothing if there is no such file.
+std::optional<std::string> read_first_line(const fs::path& path) {
+    std::error_code ec;
+    if (fs::symlink_status(path, ec).type() == fs::file_type::not_found) {
+        return std::nullopt;
+    }
+    std::ifstream in(path);
+    std::string line;
+    if (ec || !in || (!std::getline(in, line) && !in.eof())) {
+        throw Error("cannot read " + path.string());
+    }
+    return line;
+}
+
+// Reports whether a rebase of `ref` is in progress in the worktree whose
+// administrative directory is `admin`.
+bool rebasing(const fs::path& admin, const std::string& ref) {
+    // The two directories rebase keeps its state in, depending on backend.
+    for (const char* state : {"rebase-merge", "rebase-apply"}) {
+        if (read_first_line(admin / state / "head-name") == ref) {
+            return true;
+        }
+    }
+    return false;
+}
+
+}  // namespace
+
+// WARNING: Git has no command that reports this, so it reads the rebase state
+// Git keeps in each worktree's administrative directory, as Git itself does
+// before letting a branch be deleted or checked out elsewhere.
+std::optional<fs::path> rebasing_worktree(
+    const std::vector<Worktree>& worktrees, const fs::path& common,
+    std::string_view branch) {
+    const std::string ref = "refs/heads/" + std::string(branch);
+    // The main worktree's state lives in the shared directory itself.
+    if (!worktrees.empty() && !worktrees.front().bare &&
+        rebasing(common, ref)) {
+        return worktrees.front().path;
+    }
+
+    // Linked worktrees each have a directory under worktrees/, including ones
+    // whose files are gone.
+    const fs::path linked = common / "worktrees";
+    std::error_code ec;
+    fs::directory_iterator it(linked, ec);
+    if (ec == std::errc::no_such_file_or_directory) {
+        return std::nullopt;
+    }
+    for (; !ec && it != fs::directory_iterator(); it.increment(ec)) {
+        const fs::path admin = it->path();
+        if (!rebasing(admin, ref)) {
+            continue;
+        }
+        // gitdir holds the path of the worktree's .git file.
+        if (const auto dot_git = read_first_line(admin / "gitdir")) {
+            return fs::path(*dot_git).parent_path();
+        }
+        return admin;
+    }
+    if (ec) {
+        throw Error("cannot read " + linked.string() + ": " + ec.message());
+    }
+    return std::nullopt;
 }
 
 StatusResult worktree_status(const Worktree& worktree, bool count_ignored) {

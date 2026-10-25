@@ -20,6 +20,19 @@ Git removes the worktree the command runs from, leaving the shell in a deleted d
 Git refuses to merge when an untracked file is in the way, but silently replaces an ignored one, e.g. a local `.env` when the merged branch tracks a `.env`.
 `wt merge` refuses when the task's branch adds a file where the destination has an ignored file.
 
+## A branch being rebased looks free and stale
+
+Mid-rebase, the worktree is detached and the branch still points at its old commits, so `git worktree list` doesn't show the branch as checked out anywhere.
+`wt merge` used to skip the task's uncommitted-changes check and land the pre-rebase commits.
+It now reads each worktree's rebase state (`rebase-merge`/`rebase-apply` `head-name`, as Git itself does) and refuses.
+Not covered: a branch moved by another branch's `git rebase --update-refs`, which Git records separately.
+
+## Merging `main` into a task makes `main`'s history run backwards
+
+When a task has merged `main` in, landing it fast-forwards, so `main`'s first-parent history goes through "Merge branch 'main' into …".
+`wt` follows Git's merge settings rather than picking a strategy; this repository uses `merge.ff=only` and rebases tasks (see `AGENTS.md`).
+`wt merge` explains the rebase step when `merge.ff=only` blocks a task that is behind.
+
 ## Open question: should `wt remove` ever delete the branch?
 
 `wt remove` keeps the task's branch in v1, so cleaning up a merged task still needs a raw `git branch -d`.

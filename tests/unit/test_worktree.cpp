@@ -170,10 +170,10 @@ TEST_CASE("parse_status counts conflicts and untracked files") {
     CHECK(changes.staged == 0);
 }
 
-TEST_CASE("parse_status skips headers and counts ignored files apart") {
+TEST_CASE("parse_status skips headers and lists ignored files apart") {
     const auto changes = wt::git::parse_status(
         "# branch.oid 0123\0# branch.head main\0! build/\0! x.env\0"s);
-    CHECK(changes.ignored == 2);
+    CHECK(changes.ignored == std::vector<std::string>{"build/", "x.env"});
     // Ignored files aren't changes.
     CHECK(changes.empty());
 }

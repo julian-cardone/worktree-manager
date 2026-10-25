@@ -1250,6 +1250,8 @@ TEST_CASE("wt remove refuses ignored files unless told to delete them") {
           "wt: error: cannot remove feature\n"
           "\n"
           "  2 ignored files\n"
+          "    build/\n"
+          "    secret.env\n"
           "\n"
           "Ignored files are deleted with the worktree; move any you need, "
           "then rerun with --delete-ignored.\n");
@@ -1265,6 +1267,8 @@ TEST_CASE("wt remove refuses ignored files unless told to delete them") {
               "\n"
               "  1 untracked file\n"
               "  2 ignored files\n"
+              "    build/\n"
+              "    secret.env\n"
               "\n"
               "Commit, stash, or remove these changes first.\n"
               "Ignored files are deleted with the worktree; move any you "
@@ -1281,6 +1285,31 @@ TEST_CASE("wt remove refuses ignored files unless told to delete them") {
               "Commit, stash, or remove these changes first.\n");
         CHECK(read_file(path / "new.txt") == "new\n");
         CHECK(read_file(path / "secret.env") == "token\n");
+    }
+    SECTION("a long list of ignored files is cut short") {
+        for (int i = 0; i < 10; ++i) {
+            write_file(path / ("k" + std::to_string(i) + ".env"), "key\n");
+        }
+        r = run_wt(box, repo, {"remove", "feature"});
+        CHECK(r.code == 1);
+        CHECK(r.err ==
+              "wt: error: cannot remove feature\n"
+              "\n"
+              "  12 ignored files\n"
+              "    build/\n"
+              "    k0.env\n"
+              "    k1.env\n"
+              "    k2.env\n"
+              "    k3.env\n"
+              "    k4.env\n"
+              "    k5.env\n"
+              "    k6.env\n"
+              "    k7.env\n"
+              "    k8.env\n"
+              "    ... and 2 more\n"
+              "\n"
+              "Ignored files are deleted with the worktree; move any you "
+              "need, then rerun with --delete-ignored.\n");
     }
     SECTION("--delete-ignored removes them") {
         r = run_wt(box, repo, {"remove", "feature", "--delete-ignored"});
@@ -1691,7 +1720,8 @@ TEST_CASE("wt merge reports a merge Git refuses to start") {
     const fs::path path = wt_new(box, repo, "feature");
     commit_file(box, path, "a.txt", "a\n");
     commit_file(box, repo, "b.txt", "b\n");
-    git(box, repo, {"config", "merge.ff", "only"});
+    // wt doesn't read branch-specific merge options, so Git refuses for it.
+    git(box, repo, {"config", "branch.main.mergeOptions", "--ff-only"});
     const std::string before = head_of(box, repo);
 
     auto r = run_wt(box, repo, {"merge", "feature"});
@@ -1700,6 +1730,89 @@ TEST_CASE("wt merge reports a merge Git refuses to start") {
     CHECK_THAT(r.err,
                StartsWith("wt: error: git merge failed with exit code "));
     CHECK_THAT(r.err, ContainsSubstring("\nmain is unchanged.\n"));
+    check_main_restored(box, repo, before);
+}
+
+TEST_CASE("wt merge explains how to land a task when merge.ff is only") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    git(box, repo, {"config", "merge.ff", "only"});
+    const fs::path first = wt_new(box, repo, "first");
+    const fs::path second = wt_new(box, repo, "second");
+    commit_file(box, first, "a.txt", "first\n");
+    commit_file(box, second, "a.txt", "second\n");
+    commit_file(box, second, "b.txt", "b\n");
+
+    // The first task to finish fast-forwards main.
+    auto r = run_wt(box, repo, {"merge", "first"});
+    CHECK(r.code == 0);
+    CHECK(r.out == "✓ Merged first into main\n");
+    const std::string before = head_of(box, repo);
+    CHECK(before == head_of(box, first));
+
+    // The second is now behind, so it can't be fast-forwarded. Run from the
+    // task's own worktree, as an agent would: the setting is shared by all
+    // worktrees.
+    r = run_wt(box, second, {"merge", "second"});
+    CHECK(r.code == 1);
+    CHECK(r.out.empty());
+    CHECK(r.err ==
+          "wt: error: cannot fast-forward main to second\n"
+          "\n"
+          "second is 1 commit behind main, and merge.ff is set to "
+          "\"only\".\n"
+          "Rebase it onto main in its worktree, resolving any "
+          "conflicts there:\n"
+          "\n"
+          "  git -C " +
+              second.string() +
+              " rebase main\n"
+              "\n"
+              "Then run `wt merge second` again.\n");
+    check_main_restored(box, repo, before);
+
+    // Rebasing resolves the conflict in the task's worktree, and main stays
+    // linear: a fast-forward, with no merge commits.
+    const Result rebase =
+        run_in(box, second, {find_on_path("git"), "rebase", "-q", "main"});
+    REQUIRE(rebase.code != 0);
+    r = run_wt(box, repo, {"merge", "second"});
+    CHECK(r.code == 1);
+    CHECK_THAT(r.err, StartsWith("wt: error: 'second' is being rebased in " +
+                                 second.string() + "; "));
+    write_file(second / "a.txt", "first and second\n");
+    git(box, second, {"add", "a.txt"});
+    git(box, second, {"-c", "core.editor=true", "rebase", "--continue"});
+
+    r = run_wt(box, second, {"merge", "second"});
+    CHECK(r.code == 0);
+    CHECK(r.out == "✓ Merged second into main\n");
+    CHECK(head_of(box, repo) == head_of(box, second));
+    CHECK(read_file(repo / "a.txt") == "first and second\n");
+    CHECK(git_output(box, repo, {"rev-list", "--merges", "main"}).empty());
+}
+
+TEST_CASE("wt merge explains how to land a behind task without a worktree") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    git(box, repo, {"config", "merge.ff", "only"});
+    const fs::path path = wt_new(box, repo, "feature");
+    commit_file(box, path, "a.txt", "a\n");
+    git(box, repo, {"worktree", "remove", path.string()});
+    commit_file(box, repo, "b.txt", "b\n");
+    commit_file(box, repo, "c.txt", "c\n");
+    const std::string before = head_of(box, repo);
+
+    auto r = run_wt(box, repo, {"merge", "feature"});
+    CHECK(r.code == 1);
+    CHECK(r.err ==
+          "wt: error: cannot fast-forward main to feature\n"
+          "\n"
+          "feature is 2 commits behind main, and merge.ff is set to "
+          "\"only\".\n"
+          "feature has no worktree; rebase it onto main wherever you "
+          "check it out.\n"
+          "Then run `wt merge feature` again.\n");
     check_main_restored(box, repo, before);
 }
 
@@ -1765,6 +1878,55 @@ TEST_CASE("wt merge refuses when the task has uncommitted changes") {
           "(`wt status feature` shows them)\n");
     CHECK(head_of(box, repo) == before);
     CHECK(read_file(path / "forgotten.txt") == "not committed\n");
+}
+
+TEST_CASE("wt merge refuses a task that is being rebased") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature");
+    commit_file(box, path, "a.txt", "a\n");
+    commit_file(box, repo, "b.txt", "b\n");
+    const std::string task_before =
+        git_output(box, repo, {"rev-parse", "feature"});
+
+    // Mid-rebase, the worktree is detached and the branch still points at the
+    // old commits, so merging it would land work that is being rewritten.
+    SECTION("stopped with a clean worktree") {
+        const Result r = run_in(
+            box, path,
+            {find_on_path("git"), "rebase", "-q", "--exec", "false", "main"});
+        REQUIRE(r.code != 0);
+    }
+    SECTION("stopped at a conflict") {
+        commit_file(box, repo, "a.txt", "main\n");
+        const Result r =
+            run_in(box, path, {find_on_path("git"), "rebase", "-q", "main"});
+        REQUIRE(r.code != 0);
+    }
+    SECTION("in the main worktree") {
+        // A task without its own worktree can be rebased from anywhere.
+        git(box, repo, {"worktree", "remove", path.string()});
+        const Result r = run_in(box, repo,
+                                {find_on_path("git"), "rebase", "-q", "--exec",
+                                 "false", "main", "feature"});
+        REQUIRE(r.code != 0);
+        // Leave main checked out somewhere, so only the rebase is in the way.
+        git(box, repo,
+            {"worktree", "add", "-q", (box.work() / "main").string(), "main"});
+    }
+
+    auto r = run_wt(box, repo, {"merge", "feature"});
+    CHECK(r.code == 1);
+    CHECK(r.out.empty());
+    CHECK_THAT(r.err, StartsWith("wt: error: 'feature' is being rebased in "));
+    CHECK_THAT(r.err, ContainsSubstring("; finish the rebase (`git rebase "
+                                        "--continue`) or abort it (`git rebase "
+                                        "--abort`), then merge again\n"));
+    CHECK(git_output(box, repo, {"rev-parse", "feature"}) == task_before);
+    CHECK(run_in(box, repo,
+                 {find_on_path("git"), "merge-base", "--is-ancestor",
+                  task_before, "main"})
+              .code == 1);
 }
 
 TEST_CASE("wt merge refuses to overwrite ignored files in main's worktree") {
