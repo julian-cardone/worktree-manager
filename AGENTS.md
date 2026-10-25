@@ -4,7 +4,7 @@ Read this file at the start of every prompt. Do not rely on memory of previous i
 
 ## What This Is
 
-`wt` is a small C++ CLI designed to simplify Git worktree management, making it easier for developers and AI agents (Claude, Codex, etc.) to work on multiple tasks concurrently.
+`wt` is a small C++ CLI for simplifying Git worktree management so developers and AI agents can work on multiple tasks concurrently.
 
 **Product boundary:** `wt` owns the worktree lifecycle: creating, listing, inspecting, merging, removing task worktrees, and the branch cleanup that goes with them.
 
@@ -28,7 +28,7 @@ As we review and modify the codebase, watch for:
 - **Dead Code:** Remove unused or obsolete code.
 - **Shared Code:** Extract common functionality when it genuinely reduces duplication or improves maintainability.
 - **Constants:** Prefer constants at the lowest appropriate scope. Only share constants when they represent the same concept, not merely because their values match.
-- **Significant Changes:** Surface substantial refactoring, architectural decisions, or important trade-offs when they provide meaningful value.
+- **Significant Changes:** Surface substantial refactoring, architectural decisions, public behavior changes, or important trade-offs when they provide meaningful value.
 
 Implement straightforward, clearly beneficial improvements where appropriate. Surface decisions that require my input before proceeding.
 
@@ -97,9 +97,36 @@ This repository keeps `main` linear. Before reporting a task complete or landing
 - Command logic takes its working directory and output streams from `wt::Context`, never from process-global state, so tests can run against an isolated sandbox (`tests/support/sandbox.hpp`).
 - When modifying code, review the blast radius and update all affected code, references, documentation, comments, and tests.
 - Do not leave stale or inconsistent code behind.
-- Verify changes with the relevant builds and tests. Do not claim verification unless it was actually performed.
+- Before reporting a code-changing task complete or landing it, rebuild and test from the latest committed and rebased state.
+- Do not claim verification unless the relevant build and tests were actually run.
 
-## 7. Project Notes
+## 7. Task Handoff
+
+End each task with a concise handoff using this structure:
+
+- **Status:** `READY`, `NEEDS_DECISION`, `BLOCKED`, or `LANDED`
+- **Summary:** 1–2 sentences describing what changed and the outcome
+- **Verification:**
+  - tests: pass/fail and count;
+  - formatting/build: pass/fail;
+  - rebased onto latest `main`: yes/no;
+  - `main` moved during the task: yes/no.
+- **Review:**
+  - safety issue found: yes/no;
+  - public behavior changed: yes/no;
+  - product scope changed: yes/no;
+  - new finding/TODO: yes/no.
+- **Decision needed:** `None`, or the exact decision
+- **Worth external review:** `Yes` or `No`, with one sentence explaining why
+- **Next action:** exact command or action, if any
+
+Only add a **Details** section when something unusual, risky, or non-obvious happened.
+
+Do not repeat routine checks or implementation details unless they affect a decision.
+
+If **Decision needed** is `None` and **Worth external review** is `No`, the task does not need additional review before continuing through the normal workflow.
+
+## 8. Project Notes
 
 Keep project knowledge and decisions in this repository (`AGENTS.md`, `project-notes/`), not in agent-private memory. Claude auto-memory is disabled for this project in `.claude/settings.json`.
 
