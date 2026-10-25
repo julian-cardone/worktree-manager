@@ -1215,7 +1215,8 @@ TEST_CASE("wt remove refuses a worktree with uncommitted changes") {
           "  1 untracked file\n"
           "    new.txt\n"
           "\n"
-          "Commit, stash, or remove these changes first.\n");
+          "Commit or stash these changes (`git stash -u` includes untracked "
+          "files).\n");
     check_untouched(box, repo, path, "feature-x");
     CHECK(read_file(path / "a.txt") == "changed\n");
     CHECK(read_file(path / "new.txt") == "new\n");
@@ -1225,6 +1226,19 @@ TEST_CASE("wt remove refuses each kind of uncommitted change") {
     Sandbox box;
     const fs::path repo = make_repo(box, box.work() / "repo");
     const fs::path path = wt_new(box, repo, "feature");
+    const std::string untracked_advice =
+        "Commit or delete the untracked files, or stash them with "
+        "`git stash -u`.\n";
+    const std::string conflict_advice =
+        "Resolve the conflicts first, or abort the operation that caused "
+        "them.\n";
+    // Leaves README conflicted in the task's worktree.
+    const auto conflict = [&] {
+        commit_file(box, path, "README", "feature\n");
+        commit_file(box, repo, "README", "main\n");
+        REQUIRE(run_in(box, path, {find_on_path("git"), "merge", "-q", "main"})
+                    .code != 0);
+    };
     std::string expected;
 
     SECTION("staged") {
@@ -1232,39 +1246,59 @@ TEST_CASE("wt remove refuses each kind of uncommitted change") {
         git(box, path, {"add", "staged.txt"});
         // Staged and then deleted from disk: only the index has it.
         fs::remove(path / "staged.txt");
-        expected = "  1 staged file\n  1 modified file\n";
+        expected =
+            "  1 staged file\n  1 modified file\n\n"
+            "Commit or stash these changes.\n";
     }
     SECTION("unstaged deletion") {
         fs::remove(path / "README");
         fs::create_directories(path / "dir");
         write_file(path / "dir" / "README", "x\n");
         expected =
-            "  1 modified file\n  1 untracked file\n"
-            "    dir/\n";
+            "  1 modified file\n  1 untracked file\n    dir/\n\n"
+            "Commit or stash these changes (`git stash -u` includes untracked "
+            "files).\n";
     }
     SECTION("untracked directory") {
         fs::create_directories(path / "notes" / "deep");
         write_file(path / "notes" / "deep" / "idea.md", "idea\n");
-        expected = "  1 untracked file\n    notes/\n";
+        expected = "  1 untracked file\n    notes/\n\n" + untracked_advice;
     }
     SECTION("untracked file hidden by Git config") {
         git(box, repo, {"config", "status.showUntrackedFiles", "no"});
         write_file(path / "new.txt", "new\n");
-        expected = "  1 untracked file\n    new.txt\n";
+        expected = "  1 untracked file\n    new.txt\n\n" + untracked_advice;
     }
     SECTION("merge conflict") {
-        commit_file(box, path, "README", "feature\n");
-        commit_file(box, repo, "README", "main\n");
-        REQUIRE(run_in(box, path, {find_on_path("git"), "merge", "-q", "main"})
-                    .code != 0);
-        expected = "  1 conflicted file\n";
+        conflict();
+        expected = "  1 conflicted file\n\n" + conflict_advice;
+    }
+    SECTION("merge conflict and an untracked file") {
+        conflict();
+        write_file(path / "new.txt", "new\n");
+        expected =
+            "  1 untracked file\n    new.txt\n  1 conflicted file\n\n" +
+            conflict_advice +
+            "Then commit or delete the untracked files, or stash them with "
+            "`git stash -u`.\n";
+    }
+    SECTION("merge conflict with staged and untracked files") {
+        // The merge stages main's other.txt alongside the conflict.
+        commit_file(box, repo, "other.txt", "other\n");
+        conflict();
+        write_file(path / "new.txt", "new\n");
+        expected =
+            "  1 staged file\n  1 untracked file\n    new.txt\n"
+            "  1 conflicted file\n\n" +
+            conflict_advice +
+            "Then commit or stash the other changes (`git stash -u` includes "
+            "untracked files).\n";
     }
 
     auto r = run_wt(box, repo, {"remove", "feature"});
     CHECK(r.code == 2);
     CHECK(r.out.empty());
-    CHECK(r.err == "wt: refused: cannot remove feature\n\n" + expected +
-                       "\nCommit, stash, or remove these changes first.\n");
+    CHECK(r.err == "wt: refused: cannot remove feature\n\n" + expected);
     CHECK(registered(box, repo, path));
     CHECK(fs::is_directory(path));
 }
@@ -1296,7 +1330,8 @@ TEST_CASE("wt remove cuts a long list of untracked files short") {
           "    n7.txt\n"
           "    ... and 2 more\n"
           "\n"
-          "Commit, stash, or remove these changes first.\n");
+          "Commit or delete the untracked files, or stash them with "
+          "`git stash -u`.\n");
     check_untouched(box, repo, path, "feature");
     CHECK(read_file(path / "n11.txt") == "new\n");
 }
@@ -1340,7 +1375,8 @@ TEST_CASE("wt remove refuses ignored files unless told to delete them") {
               "    build/\n"
               "    secret.env\n"
               "\n"
-              "Commit, stash, or remove these changes first.\n"
+              "Commit or delete the untracked files, or stash them with "
+              "`git stash -u`.\n"
               "Ignored files are deleted with the worktree; move any you "
               "need, then rerun with --delete-ignored.\n");
 
@@ -1353,7 +1389,8 @@ TEST_CASE("wt remove refuses ignored files unless told to delete them") {
               "  1 untracked file\n"
               "    new.txt\n"
               "\n"
-              "Commit, stash, or remove these changes first.\n");
+              "Commit or delete the untracked files, or stash them with "
+              "`git stash -u`.\n");
         CHECK(read_file(path / "new.txt") == "new\n");
         CHECK(read_file(path / "secret.env") == "token\n");
     }
@@ -2493,7 +2530,8 @@ TEST_CASE(
           "  1 untracked file\n"
           "    late.txt\n"
           "\n"
-          "Commit, stash, or remove these changes first.\n"
+          "Commit or delete the untracked files, or stash them with "
+          "`git stash -u`.\n"
           "\n"
           "feature has landed in main, but the cleanup didn't finish:\n"
           "- its worktree is still there (`wt list` shows it)\n"

@@ -308,7 +308,7 @@ wt: refused: cannot remove feature-x
   1 untracked file
     notes.md
 
-Commit, stash, or remove these changes first.
+Commit or delete the untracked files, or stash them with `git stash -u`.
 
 feature-x has landed in main, but the cleanup didn't finish:
 - its worktree is still there (`wt list` shows it)
@@ -349,12 +349,13 @@ wt: refused: cannot remove feature-x
     .env
     build/
 
-Commit, stash, or remove these changes first.
+Commit or delete the untracked files, or stash them with `git stash -u`.
 Ignored files are deleted with the worktree; move any you need, then rerun with --delete-ignored.
 ```
 
 Counts follow `git status`: an untracked or ignored directory counts once.
 Untracked files are named (up to 10) as well, since Git has no copy of them.
+The advice after the counts covers only the kinds of change present: plain `git stash` skips untracked files, and Git won't stash while conflicts are unresolved, so those are resolved or aborted first.
 Git itself deletes ignored files (such as `.env` files or build output) with the worktree, so `wt` treats them as something to lose too, and names them (up to 10) so you can check what `--delete-ignored` would delete.
 `--delete-ignored` lets them be deleted, but never overrides any other check.
 `wt` never passes `--force` to Git, so Git's own check for modified and untracked files still applies.

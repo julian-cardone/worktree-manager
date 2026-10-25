@@ -81,6 +81,31 @@ void add_listed(std::vector<std::string>& lines,
     }
 }
 
+// Says how to deal with the uncommitted changes, on stderr. Each kind needs
+// different advice: plain `git stash` skips untracked files, and Git won't
+// stash at all while conflicts are unresolved, so those come first.
+void report_recovery(const Context& ctx, const git::Changes& changes) {
+    const bool conflicts = changes.conflicts != 0;
+    const bool tracked = changes.staged != 0 || changes.modified != 0;
+    const bool untracked = !changes.untracked.empty();
+
+    if (conflicts) {
+        ctx.err << "Resolve the conflicts first, or abort the operation that "
+                   "caused them.\n";
+    }
+    if (tracked) {
+        ctx.err << (conflicts ? "Then commit or stash the other changes"
+                              : "Commit or stash these changes")
+                << (untracked ? " (`git stash -u` includes untracked files)"
+                              : "")
+                << ".\n";
+    } else if (untracked) {
+        ctx.err << (conflicts ? "Then commit" : "Commit")
+                << " or delete the untracked files, or stash them with "
+                   "`git stash -u`.\n";
+    }
+}
+
 // Explains what removal would destroy, on stderr. Untracked and ignored files
 // are named, not just counted: Git has no copy of them, and deciding to pass
 // --delete-ignored means having seen whether something like a .env file is
@@ -102,9 +127,7 @@ void report_blocked(const Context& ctx, const std::string& task,
         ctx.err << "  " << line << '\n';
     }
     ctx.err << '\n';
-    if (!changes.empty()) {
-        ctx.err << "Commit, stash, or remove these changes first.\n";
-    }
+    report_recovery(ctx, changes);
     if (show_ignored && !changes.ignored.empty()) {
         ctx.err << "Ignored files are deleted with the worktree; move any you "
                    "need, then rerun with --delete-ignored.\n";
