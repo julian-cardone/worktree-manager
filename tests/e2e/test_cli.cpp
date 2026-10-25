@@ -2489,6 +2489,79 @@ TEST_CASE("wt merge refuses a task that is being rebased") {
               .code == 1);
 }
 
+TEST_CASE("wt merge refuses a task that git rebase --update-refs will move") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature");
+    commit_file(box, path, "a.txt", "a\n");
+    // A second task stacked on the first, in its own worktree.
+    const fs::path top = wt_new(box, repo, "top");
+    git(box, top, {"rebase", "-q", "feature"});
+    commit_file(box, top, "t.txt", "t\n");
+    // --update-refs leaves alone branches checked out elsewhere.
+    git(box, repo, {"worktree", "remove", path.string()});
+    commit_file(box, repo, "b.txt", "b\n");
+    const std::string task_before =
+        git_output(box, repo, {"rev-parse", "feature"});
+
+    // Rebasing top stops after rewriting feature's commit, before moving
+    // feature, so feature is neither checked out nor named in head-name.
+    const Result rebase = run_in(box, top,
+                                 {find_on_path("git"), "rebase", "-q",
+                                  "--update-refs", "--exec", "false", "main"});
+    REQUIRE(rebase.code != 0);
+    const fs::path state =
+        fs::path(git_output(box, top, {"rev-parse", "--absolute-git-dir"})) /
+        "rebase-merge";
+    REQUIRE(read_file(state / "head-name") == "refs/heads/top\n");
+    REQUIRE_THAT(read_file(state / "update-refs"),
+                 StartsWith("refs/heads/feature\n" + task_before + "\n"));
+
+    auto r = run_wt(box, repo, {"merge", "feature", "--cleanup"});
+    CHECK(r.code == 2);
+    CHECK(r.out.empty());
+    CHECK(r.err == "wt: refused: 'feature' is being rebased in " +
+                       top.string() +
+                       "; finish the rebase (`git rebase --continue`) or "
+                       "abort it (`git rebase --abort`), then merge again\n");
+    CHECK(git_output(box, repo, {"rev-parse", "feature"}) == task_before);
+    CHECK(run_in(box, repo,
+                 {find_on_path("git"), "merge-base", "--is-ancestor",
+                  task_before, "main"})
+              .code == 1);
+
+    // Each --continue runs on to the next failing exec; the second finishes
+    // the rebase and moves feature, which can then land.
+    REQUIRE(
+        run_in(box, top, {find_on_path("git"), "rebase", "--continue"}).code !=
+        0);
+    git(box, top, {"rebase", "--continue"});
+    REQUIRE_FALSE(fs::exists(state));
+    r = run_wt(box, repo, {"merge", "feature", "--cleanup"});
+    CHECK(r.code == 0);
+    CHECK_THAT(r.out, StartsWith("✓ Merged feature into main\n"));
+    CHECK(git_output(box, repo, {"rev-parse", "main"}) ==
+          git_output(box, top, {"rev-parse", "HEAD~1"}));
+}
+
+TEST_CASE("wt merge refuses when --update-refs state can't be understood") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature");
+    commit_file(box, path, "a.txt", "a\n");
+    const std::string before = head_of(box, repo);
+    // A truncated entry might be the one naming feature.
+    const fs::path state = repo / ".git" / "rebase-merge";
+    fs::create_directories(state);
+    write_file(state / "update-refs", "refs/heads/other\n");
+
+    const auto r = run_wt(box, repo, {"merge", "feature"});
+    CHECK(r.code == 2);
+    CHECK(r.err == "wt: refused: cannot understand " +
+                       (state / "update-refs").string() + "\n");
+    CHECK(head_of(box, repo) == before);
+}
+
 TEST_CASE("wt merge refuses to overwrite ignored files in main's worktree") {
     Sandbox box;
     const fs::path repo = make_repo(box, box.work() / "repo");

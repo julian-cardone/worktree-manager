@@ -233,7 +233,7 @@ If the integration branch already has every commit on `<task>`, it says so and d
 
 - the integration branch's worktree has staged, modified, or untracked files, or is in the middle of a merge, cherry-pick, or revert;
 - the task's worktree has uncommitted changes, since the merge wouldn't include them (a task branch with no worktree merges fine);
-- `<task>` is in the middle of a rebase in any worktree, since its branch still points at the commits being rewritten;
+- `<task>` is in the middle of a rebase in any worktree, or a `git rebase --update-refs` there will move it, since its branch still points at the commits being rewritten;
 - `merge.ff` is set to `only` and `<task>` is behind the integration branch (see below);
 - the merge would overwrite ignored files in the integration branch's worktree, i.e. the task's branch adds a file where one is ignored (such as `.env`), which Git would otherwise replace silently;
 - the integration branch isn't checked out in any worktree, or `<task>` is the integration branch.

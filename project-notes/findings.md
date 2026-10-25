@@ -4,11 +4,7 @@
 
 Known gaps that still need action.
 
-### `git rebase --update-refs` branches look free and stale
-
-`git rebase --update-refs` also moves other branches that point into the rebased commits, and Git records those in the rebasing worktree's `rebase-merge/update-refs`, not in `head-name`.
-Until the rebase finishes, such a branch still points at its old commits but is not checked out anywhere, so `wt merge` doesn't see it as being rebased and could land the pre-rebase commits.
-Git itself treats these branches as checked out; `wt` should read the same file and refuse.
+None right now.
 
 ## Addressed
 
@@ -53,7 +49,12 @@ When Git reports `core.ignorecase`, `wt new` refuses a branch that equals, conta
 Mid-rebase, the worktree is detached and the branch still points at its old commits, so `git worktree list` doesn't show the branch as checked out anywhere.
 `wt merge` used to skip the task's uncommitted-changes check and land the pre-rebase commits.
 It now reads each worktree's rebase state (`rebase-merge`/`rebase-apply` `head-name`, as Git itself does) and refuses.
-Branches moved by `git rebase --update-refs` are not covered yet (see the open finding above).
+
+### Branches `git rebase --update-refs` will move look free and stale too
+
+`git rebase --update-refs` also moves other branches that point into the rebased commits, and records them in the rebasing worktree's `rebase-merge/update-refs`, not in `head-name`.
+Until the rebase finishes, such a branch still points at its old commits and isn't checked out anywhere, so `wt merge` landed its pre-rebase commits and `--cleanup` then failed in `git branch -d`, which, like the rest of Git, treats the branch as in use.
+The rebase-state check now also reads `update-refs` (as Git itself does) and refuses for a branch listed there, and refuses when the file can't be parsed.
 
 ### Merging `main` into a task makes `main`'s history run backwards
 

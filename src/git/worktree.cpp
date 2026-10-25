@@ -191,8 +191,39 @@ std::optional<std::string> read_first_line(const fs::path& path) {
     return line;
 }
 
-// Reports whether a rebase of `ref` is in progress in the worktree whose
-// administrative directory is `admin`.
+// Reports whether `ref` is among the branches `git rebase --update-refs` will
+// move when the rebase whose state is in `state` finishes. Each is recorded as
+// three lines: the ref, its commit before the rebase, and its commit after.
+bool updating_ref(const fs::path& state, const std::string& ref) {
+    const fs::path path = state / "update-refs";
+    std::error_code ec;
+    if (fs::symlink_status(path, ec).type() == fs::file_type::not_found) {
+        return false;
+    }
+    std::ifstream in(path);
+    if (ec || !in) {
+        throw wt::Error(ErrorKind::refused, "cannot read " + path.string());
+    }
+    std::string name;
+    std::string before;
+    std::string after;
+    while (std::getline(in, name)) {
+        if (!std::getline(in, before) || !std::getline(in, after)) {
+            throw wt::Error(ErrorKind::refused,
+                            "cannot understand " + path.string());
+        }
+        if (name == ref) {
+            return true;
+        }
+    }
+    if (!in.eof()) {
+        throw wt::Error(ErrorKind::refused, "cannot read " + path.string());
+    }
+    return false;
+}
+
+// Reports whether a rebase in progress in the worktree whose administrative
+// directory is `admin` is rewriting `ref`.
 bool rebasing(const fs::path& admin, const std::string& ref) {
     // The two directories rebase keeps its state in, depending on backend.
     for (const char* state : {"rebase-merge", "rebase-apply"}) {
@@ -200,14 +231,16 @@ bool rebasing(const fs::path& admin, const std::string& ref) {
             return true;
         }
     }
-    return false;
+    // Only the merge backend supports --update-refs.
+    return updating_ref(admin / "rebase-merge", ref);
 }
 
 }  // namespace
 
 // WARNING: Git has no command that reports this, so it reads the rebase state
 // Git keeps in each worktree's administrative directory, as Git itself does
-// before letting a branch be deleted or checked out elsewhere.
+// before letting a branch be deleted or checked out elsewhere. That includes
+// branches `--update-refs` will move, not only the one being rebased.
 std::optional<fs::path> rebasing_worktree(
     const std::vector<Worktree>& worktrees, const fs::path& common,
     std::string_view branch) {

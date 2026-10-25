@@ -64,9 +64,10 @@ std::optional<std::size_t> find_worktree_containing(
 bool worktree_contains(const Worktree& worktree,
                        const std::filesystem::path& dir);
 
-// The worktree in which `branch` (a short name) is being rebased, if any.
-// Mid-rebase, the worktree is detached and the branch still points at its old
-// commits, so nothing in `git worktree list` shows the branch is in use.
+// The worktree in which `branch` (a short name) is being rebased, if any,
+// either as the branch rebased or as one `git rebase --update-refs` will move.
+// Mid-rebase, the branch still points at its old commits and isn't checked
+// out anywhere, so nothing in `git worktree list` shows the branch is in use.
 // `common` is the repository's shared Git directory. Throws a refused
 // wt::Error if a worktree's rebase state can't be read, since a branch that
 // might be mid-rebase isn't safe to use.
