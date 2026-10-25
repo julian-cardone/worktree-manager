@@ -188,10 +188,11 @@ void check_target_free(const std::vector<git::Worktree>& worktrees,
                             note);
         }
         // `git worktree prune` would also forget every other stale worktree.
-        const std::string forget =
-            worktree.branch
-                ? "`wt remove " + ui::shell_quote(*worktree.branch) + "`"
-                : std::string("`git worktree prune`");
+        const std::string forget = worktree.branch
+                                       ? "`wt remove " +
+                                             ui::shell_quote(*worktree.branch) +
+                                             " --forget-missing`"
+                                       : std::string("`git worktree prune`");
         throw Error(ErrorKind::refused,
                     "Git already has a worktree registered at " +
                         target.string() + " although its directory is gone; " +

@@ -1011,8 +1011,9 @@ TEST_CASE("wt new names the task to remove when its path is registered") {
 
     auto r = run_wt(box, repo, {"new", "a-b"});
     CHECK(r.code == 2);
-    CHECK_THAT(r.err, EndsWith("although its directory is gone; "
-                               "`wt remove a/b` forgets it\n"));
+    CHECK_THAT(r.err,
+               EndsWith("although its directory is gone; "
+                        "`wt remove a/b --forget-missing` forgets it\n"));
 }
 
 TEST_CASE("wt new refuses a container it can't prove it owns") {
@@ -1416,7 +1417,8 @@ TEST_CASE("wt status reports a worktree whose directory was deleted") {
     CHECK(r.err ==
           "wt: warning: the worktree's directory is gone; if it was moved, "
           "`git worktree repair <new-path>` reconnects it, otherwise "
-          "`wt remove gone` makes Git forget it and keeps the branch\n");
+          "`wt remove gone --forget-missing` makes Git forget it and keeps "
+          "the branch\n");
 }
 
 TEST_CASE("wt status says a locked worktree whose directory is gone is kept") {
@@ -1946,7 +1948,34 @@ TEST_CASE("wt reports a GIT_DIR that isn't a Git directory") {
     CHECK_THAT(r.err, EndsWith("; unset GIT_DIR or point it at one\n"));
 }
 
-TEST_CASE("wt remove cleans up a worktree whose directory is gone") {
+TEST_CASE("wt remove refuses to forget a worktree whose directory is gone") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "gone");
+    // It may only have been moved; Git's record is what lets it be repaired.
+    const fs::path moved = box.work() / "moved";
+    fs::rename(path, moved);
+
+    auto r = run_wt(box, repo, {"remove", "gone"});
+    CHECK(r.code == 2);
+    CHECK(r.out.empty());
+    CHECK(r.err ==
+          "wt: refused: nothing is at " + path.string() +
+              ", where Git has the worktree for 'gone' registered\n\n"
+              "It may have been moved, or be on a drive that isn't mounted.\n"
+              "If it was moved, `git worktree repair <new-path>` reconnects "
+              "it.\n"
+              "If it's gone for good, `wt remove gone --forget-missing` "
+              "removes only Git's record of it and keeps the branch.\n");
+    CHECK(registered(box, repo, path));
+
+    git(box, repo, {"worktree", "repair", moved.string()});
+    CHECK(git_output(box, moved, {"branch", "--show-current"}) == "gone");
+}
+
+TEST_CASE(
+    "wt remove --forget-missing forgets a worktree whose directory is "
+    "gone") {
     Sandbox box;
     const fs::path repo = make_repo(box, box.work() / "repo");
     const fs::path path = wt_new(box, repo, "gone");
@@ -1959,7 +1988,7 @@ TEST_CASE("wt remove cleans up a worktree whose directory is gone") {
         fs::remove_all(path.parent_path());
     }
 
-    auto r = run_wt(box, repo, {"remove", "gone"});
+    auto r = run_wt(box, repo, {"remove", "gone", "--forget-missing"});
     CHECK(r.code == 0);
     CHECK(r.err.empty());
     CHECK(r.out == "Worktree " + path.string() +
@@ -1968,6 +1997,53 @@ TEST_CASE("wt remove cleans up a worktree whose directory is gone") {
     CHECK_FALSE(registered(box, repo, path));
     CHECK(git_output(box, repo, {"log", "-1", "--format=%s", "gone"}) ==
           "change a.txt");
+}
+
+TEST_CASE("wt remove --forget-missing only applies when nothing is there") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature");
+    const fs::path moved = box.work() / "moved";
+    std::string err;
+
+    SECTION("the worktree is there") {
+        err = "wt: refused: " + path.string() +
+              " is there, so --forget-missing doesn't apply; nothing was "
+              "removed\n";
+    }
+    SECTION("a file is there") {
+        fs::rename(path, moved);
+        write_file(path, "keep me");
+        err = "wt: refused: " + path.string() +
+              " is not a directory, so wt won't remove it\n";
+    }
+    SECTION("a dangling symlink is there") {
+        fs::rename(path, moved);
+        fs::create_directory_symlink(box.work() / "nowhere", path);
+        err = "wt: refused: " + path.string() +
+              " is not a directory, so wt won't remove it\n";
+    }
+
+    auto r = run_wt(box, repo, {"remove", "feature", "--forget-missing"});
+    CHECK(r.code == 2);
+    CHECK(r.out.empty());
+    CHECK(r.err == err);
+    CHECK(registered(box, repo, path));
+    CHECK(fs::exists(fs::symlink_status(path)));
+}
+
+TEST_CASE("wt remove --forget-missing keeps a locked worktree") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "offline");
+    git(box, repo, {"worktree", "lock", path.string()});
+    fs::remove_all(path);
+
+    auto r = run_wt(box, repo, {"remove", "offline", "--forget-missing"});
+    CHECK(r.code == 2);
+    CHECK_THAT(r.err,
+               StartsWith("wt: refused: the worktree for 'offline' is locked"));
+    CHECK(registered(box, repo, path));
 }
 
 TEST_CASE("wt remove refuses the main worktree") {
@@ -3333,6 +3409,38 @@ TEST_CASE(
               task_head.substr(0, 7) + ")\n");
     CHECK_FALSE(branch_exists(box, repo, "feature"));
     check_main_restored(box, repo, before);
+}
+
+TEST_CASE("wt merge --cleanup refuses a worktree whose directory is gone") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature");
+    commit_file(box, path, "a.txt", "a\n");
+    const std::string task_head = head_of(box, path);
+    fs::remove_all(path);
+    const std::string before = head_of(box, repo);
+
+    auto r = run_wt(box, repo, {"merge", "feature", "--cleanup"});
+    CHECK(r.code == 2);
+    CHECK(r.out.empty());
+    CHECK_THAT(r.err,
+               StartsWith("wt: refused: nothing is at " + path.string()) &&
+                   EndsWith("If it's gone for good, `wt remove feature "
+                            "--forget-missing` removes only Git's record of "
+                            "it and keeps the branch; then rerun `wt merge "
+                            "feature --cleanup`.\nNothing was merged.\n"));
+    CHECK(head_of(box, repo) == before);
+    CHECK(registered(box, repo, path));
+    CHECK(branch_exists(box, repo, "feature"));
+
+    // Forgetting it explicitly is what lets the cleanup go ahead.
+    REQUIRE(run_wt(box, repo, {"remove", "feature", "--forget-missing"}).code ==
+            0);
+    r = run_wt(box, repo, {"merge", "feature", "--cleanup"});
+    CHECK(r.code == 0);
+    CHECK(r.out == "✓ Merged feature into main\nDeleted branch feature (was " +
+                       task_head.substr(0, 7) + ")\n");
+    CHECK_FALSE(branch_exists(box, repo, "feature"));
 }
 
 TEST_CASE(

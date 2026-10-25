@@ -63,6 +63,9 @@ std::unique_ptr<CLI::App> make_app() {
     remove->add_flag("--delete-ignored",
                      "Remove the worktree even if it holds ignored files, "
                      "deleting them");
+    remove->add_flag("--forget-missing",
+                     "If nothing is at the worktree's path any more, remove "
+                     "only Git's record of it");
     auto* merge = app->add_subcommand(
         "merge",
         "Merge a task's branch into the integration branch; on a conflict, "
@@ -103,7 +106,8 @@ int run(int argc, const char* const* argv, const Context& invoked) {
         if (auto* sub = app->get_subcommand("remove"); sub->parsed()) {
             return remove_command(
                 ctx, sub->get_option("task")->as<std::string>(),
-                sub->get_option("--delete-ignored")->as<bool>());
+                sub->get_option("--delete-ignored")->as<bool>(),
+                sub->get_option("--forget-missing")->as<bool>());
         }
         if (auto* sub = app->get_subcommand("merge"); sub->parsed()) {
             return merge_command(

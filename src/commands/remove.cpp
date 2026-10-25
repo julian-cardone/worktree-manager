@@ -134,6 +134,29 @@ void report_blocked(const Context& ctx, const std::string& task,
     }
 }
 
+// Explains, on stderr, why a worktree whose directory is missing isn't
+// forgotten without being asked, and the ways out.
+void report_missing(const Context& ctx, const git::Worktree& worktree,
+                    const std::string& task, std::string_view command) {
+    const std::string quoted = ui::printable(ui::shell_quote(task));
+    ctx.err << error_prefix(ErrorKind::refused) << "nothing is at "
+            << ui::printable(worktree.path.string())
+            << ", where Git has the worktree for '" << ui::printable(task)
+            << "' registered\n\n"
+            << "It may have been moved, or be on a drive that isn't "
+               "mounted.\n"
+            << "If it was moved, `git worktree repair <new-path>` reconnects "
+               "it.\n"
+            << "If it's gone for good, `wt remove " << quoted
+            << " --forget-missing` removes only Git's record of it and keeps "
+               "the branch";
+    if (command != "wt remove") {
+        ctx.err << "; then rerun `" << command << ' ' << quoted
+                << " --cleanup`";
+    }
+    ctx.err << ".\n";
+}
+
 void report_failure(const Context& ctx, const git::Result& result,
                     const fs::path& path) {
     ctx.err << error_prefix(ErrorKind::git)
@@ -173,7 +196,7 @@ RemovalCheck check_removable(const Context& ctx,
                              const std::vector<git::Worktree>& worktrees,
                              const git::Worktree& worktree,
                              const std::string& task, bool delete_ignored,
-                             std::string_view command) {
+                             bool forget_missing, std::string_view command) {
     // WARNING: wt must never remove the main worktree, whatever branch it has
     // checked out; it is the user's repository itself, not a task. Git lists
     // it first, so its position, not a branch name, identifies it.
@@ -214,12 +237,27 @@ RemovalCheck check_removable(const Context& ctx,
     }
 
     const auto status = git::worktree_status(worktree, /*count_ignored=*/true);
+    // WARNING: the flag only ever forgets a record whose path is empty; it
+    // must not remove a worktree that is there after all.
+    if (forget_missing && status.status != git::Status::missing) {
+        throw Error(ErrorKind::refused,
+                    worktree.path.string() +
+                        " is there, so --forget-missing doesn't apply; "
+                        "nothing was removed");
+    }
     switch (status.status) {
         case git::Status::unknown:
             throw Error(ErrorKind::refused,
                         "cannot read the status of " + worktree.path.string() +
                             ": " + status.detail + "; not removing it");
+        // WARNING: a missing directory may have been moved or be on a drive
+        // that isn't mounted, and forgetting the worktree deletes its index
+        // and any operation state with Git's record, so it takes asking.
         case git::Status::missing:
+            if (!forget_missing) {
+                report_missing(ctx, worktree, task, command);
+                return {.allowed = false, .missing = true};
+            }
             return {.allowed = true, .missing = true};
         case git::Status::bare:
             // Only the main worktree can be bare, and it was refused above.
@@ -276,12 +314,13 @@ int remove_worktree(const Context& ctx, const git::Worktree& worktree,
 }
 
 int remove_command(const Context& ctx, const std::string& task,
-                   bool delete_ignored) {
+                   bool delete_ignored, bool forget_missing) {
     const auto worktrees = git::list_worktrees(ctx.repo);
     const git::Worktree& worktree =
         find_task_worktree(ctx.repo, worktrees, task);
-    const auto check = check_removable(ctx, worktrees, worktree, task,
-                                       delete_ignored, "wt remove");
+    const auto check =
+        check_removable(ctx, worktrees, worktree, task, delete_ignored,
+                        forget_missing, "wt remove");
     if (!check.allowed) {
         return exit_code(ErrorKind::refused);
     }

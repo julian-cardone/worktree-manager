@@ -102,7 +102,7 @@ If cleanup fails after the task has landed, `wt merge` says what was left behind
 
 Deal with that state, then rerun the command it prints. The task has already landed, so the rerun only completes cleanup.
 
-Never delete a task branch with `git branch`. To clean up a task branch that has already landed, even if its worktree is gone, run:
+Never delete a task branch with `git branch`. To clean up a task branch that has already landed, even if its worktree was already removed, run:
 
 ```bash
 wt merge <task> --cleanup

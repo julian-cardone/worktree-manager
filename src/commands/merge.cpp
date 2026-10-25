@@ -346,9 +346,12 @@ bool check_cleanup(const Context& ctx,
                    const std::vector<git::Worktree>& worktrees,
                    const git::Worktree* source, const std::string& task,
                    const std::string& base, bool delete_ignored) {
-    if (source != nullptr && !check_removable(ctx, worktrees, *source, task,
-                                              delete_ignored, "wt merge")
-                                  .allowed) {
+    // A missing worktree is never forgotten here: that takes an explicit
+    // `wt remove --forget-missing` first, which the refusal explains.
+    if (source != nullptr &&
+        !check_removable(ctx, worktrees, *source, task, delete_ignored,
+                         /*forget_missing=*/false, "wt merge")
+             .allowed) {
         ctx.err << "Nothing was merged.\n";
         return false;
     }
@@ -441,8 +444,9 @@ int clean_up(const Context& ctx, const std::string& task,
         if (const auto* source = find_branch_worktree(worktrees, task)) {
             // WARNING: checked again, since the merge (and its hooks) ran
             // since the check before it.
-            const auto check = check_removable(ctx, worktrees, *source, task,
-                                               delete_ignored, "wt merge");
+            const auto check =
+                check_removable(ctx, worktrees, *source, task, delete_ignored,
+                                /*forget_missing=*/false, "wt merge");
             if (!check.allowed) {
                 report_unfinished(ctx, task, base, false, delete_ignored);
                 return exit_code(ErrorKind::refused);

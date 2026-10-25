@@ -46,7 +46,7 @@ void report_missing(const Context& ctx, const git::Worktree& worktree,
     ctx.err << "; if it was moved, `git worktree repair <new-path>` "
                "reconnects it, otherwise `wt remove "
             << ui::printable(ui::shell_quote(task))
-            << "` makes Git forget it and keeps the branch\n";
+            << " --forget-missing` makes Git forget it and keeps the branch\n";
 }
 
 }  // namespace

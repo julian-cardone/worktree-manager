@@ -64,6 +64,7 @@ git ls-files '*.cpp' '*.hpp' | xargs clang-format -i
 | `wt merge <task>` | Merge the task's branch into the integration branch, following Git's merge settings; on a conflict, abort and list the conflicting files. |
 | `wt merge <task> --cleanup` | Merge the task, then remove its worktree and delete its branch once it's proven to have landed. |
 | `wt remove <task>` | Remove the task's worktree if nothing uncommitted would be lost. The branch is kept. |
+| `wt remove <task> --forget-missing` | Remove only Git's record of a worktree whose directory is gone. The branch is kept. |
 
 The version is set by `project(wt VERSION ...)` in `CMakeLists.txt`.
 
@@ -214,7 +215,7 @@ The ahead and behind lines are left out for the integration branch itself and fo
 If there is no integration branch, `wt status` warns and leaves them out.
 
 If the worktree's directory is gone, the status is `missing` and the change counts are left out; ahead and behind still show, since they only depend on the branch.
-A warning says how to recover: `git worktree repair <new-path>` if the directory was moved, otherwise `wt remove <task>`.
+A warning says how to recover: `git worktree repair <new-path>` if the directory was moved, otherwise `wt remove <task> --forget-missing`.
 If the worktree is locked (e.g. it lives on a removable drive), the warning says Git keeps its record until it is unlocked.
 If the status can't be read, `wt status` prints what it can and exits 1.
 It also exits 1 if no worktree has the branch checked out.
@@ -298,7 +299,7 @@ Deleted branch feature-x (was 3f2a9c1)
 `wt remove` itself never deletes a branch; this is the only command that does.
 `--delete-ignored` may be added, with the same meaning as for `wt remove`: it lets ignored files be deleted with the worktree, and never overrides any other check.
 
-**Before merging**, `wt merge --cleanup` also refuses, and changes nothing, if the worktree couldn't be removed afterwards (for example, it has ignored files and `--delete-ignored` wasn't given, or you are running `wt` from inside it), or if the branch has an upstream other than the integration branch that lacks its commits, since `git branch -d` would then refuse to delete it.
+**Before merging**, `wt merge --cleanup` also refuses, and changes nothing, if the worktree couldn't be removed afterwards (for example, it has ignored files and `--delete-ignored` wasn't given, its directory is missing, or you are running `wt` from inside it), or if the branch has an upstream other than the integration branch that lacks its commits, since `git branch -d` would then refuse to delete it.
 
 **The branch is deleted only once that's proven safe.**
 After the worktree is gone, `wt` reads the state again and refuses unless the branch is checked out nowhere, isn't being rebased, and its current tip is contained in the integration branch.
@@ -309,6 +310,7 @@ Remote branches, such as `origin/<task>`, are never touched.
 
 **If the task has already landed**, `wt merge --cleanup` finds nothing to merge and goes straight to the cleanup.
 That also deletes branches whose worktrees were removed earlier with `wt remove`.
+`--cleanup` never forgets a worktree whose directory is missing; run `wt remove <task> --forget-missing` first, then rerun it.
 
 **If the cleanup fails after landing**, the merge stays, and `wt` says what was left and how to finish:
 
@@ -382,8 +384,20 @@ Git itself deletes ignored files (such as `.env` files or build output) with the
 - a worktree whose status can't be read;
 - a worktree in the middle of a merge, rebase, `git am`, cherry-pick, revert, or bisect, even with clean files, since that state is deleted with it.
 
-**If the worktree's directory is already gone**, `wt remove` only removes Git's record of it, and says so.
-This also works if the whole container was deleted.
+**If nothing is at the worktree's path any more**, `wt remove` refuses, since the directory may have been moved or be on a drive that isn't mounted:
+
+```
+$ wt remove feature-x
+wt: refused: nothing is at /Users/me/Dev/.worktree-manager.wt-a13f92c4/feature-x, where Git has the worktree for 'feature-x' registered
+
+It may have been moved, or be on a drive that isn't mounted.
+If it was moved, `git worktree repair <new-path>` reconnects it.
+If it's gone for good, `wt remove feature-x --forget-missing` removes only Git's record of it and keeps the branch.
+```
+
+`--forget-missing` removes only Git's record of the worktree, which also holds its index and any in-progress operation state, and keeps the branch.
+It applies only when nothing at all is at the path: a worktree that is there, or a file or symlink in its place, is still refused, as is a locked worktree.
+It also works if the whole container was deleted.
 Other stale worktrees are left alone, unlike `git worktree prune`.
 
 **If Git fails**, `wt remove` exits 4, shows Git's output, and says whether the worktree's directory is still there.
