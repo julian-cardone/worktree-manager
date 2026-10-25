@@ -190,9 +190,26 @@ std::vector<std::string> conflicted_files(const fs::path& dir) {
     return files;
 }
 
-// Aborts the merge in `dest` and checks that it is back at `before`, clean,
-// with no merge in progress. Returns what is wrong, if anything.
+// Checks that `dest` still has `base` checked out at `commit`. Returns what is
+// wrong, if anything.
+// WARNING: compare the branch too, not only HEAD's commit: a hook can point
+// HEAD at another branch, or detach it, at the same commit.
+std::optional<std::string> position_problem(const git::Worktree& dest,
+                                            const std::string& base,
+                                            const std::string& commit) {
+    if (git::head_branch(dest.path) != "refs/heads/" + base) {
+        return base + "'s worktree no longer has " + base + " checked out";
+    }
+    if (git::resolve_commit(dest.path, "HEAD") != commit) {
+        return base + " moved from " + commit.substr(0, 7);
+    }
+    return std::nullopt;
+}
+
+// Aborts the merge in `dest` and checks that it is back on `base` at `before`,
+// clean, with no merge in progress. Returns what is wrong, if anything.
 std::optional<std::string> abort_merge(const git::Worktree& dest,
+                                       const std::string& base,
                                        const std::string& before) {
     const git::Result r = git::run(dest.path, {"merge", "--abort"});
     if (r.exit_code != 0) {
@@ -201,8 +218,8 @@ std::optional<std::string> abort_merge(const git::Worktree& dest,
     if (git::resolve_commit(dest.path, "MERGE_HEAD")) {
         return "a merge is still in progress";
     }
-    if (git::resolve_commit(dest.path, "HEAD") != before) {
-        return "HEAD moved from " + before.substr(0, 7);
+    if (auto problem = position_problem(dest, base, before)) {
+        return problem;
     }
     const auto status = git::worktree_status(dest);
     if (status.status != git::Status::clean) {
@@ -225,8 +242,8 @@ std::optional<std::string> merge_problem(const git::Worktree& dest,
     if (!tip || !git::is_ancestor(dest.path, task_commit, *tip)) {
         return base + " doesn't contain " + task;
     }
-    if (git::resolve_commit(dest.path, "HEAD") != tip) {
-        return base + "'s worktree is no longer at " + base;
+    if (auto problem = position_problem(dest, base, *tip)) {
+        return problem;
     }
     if (auto operation = git::operation_in_progress(dest.path)) {
         return base + "'s worktree is in the middle of " + *operation;
@@ -501,14 +518,20 @@ int land(const Context& ctx, const std::string& task, const std::string& base,
                 << "git merge failed with exit code " << result.exit_code
                 << '\n';
         print_git_output(ctx, result);
-        if (git::resolve_commit(dest.path, "HEAD") == before) {
+        if (auto problem = position_problem(dest, base, *before)) {
+            ctx.err << '\n'
+                    << ui::printable(*problem) << "; inspect " << shown_base
+                    << "'s worktree with `git -C "
+                    << ui::printable(ui::shell_quote(dest.path.string()))
+                    << " status`.\n";
+        } else {
             ctx.err << '\n' << shown_base << " is unchanged.\n";
         }
         return exit_code(ErrorKind::git);
     }
 
     const auto conflicts = conflicted_files(dest.path);
-    if (auto problem = abort_merge(dest, *before)) {
+    if (auto problem = abort_merge(dest, base, *before)) {
         ctx.err << error_prefix(ErrorKind::git)
                 << "the merge failed, and wt could not restore " << shown_base
                 << ": " << ui::printable(*problem) << '\n';

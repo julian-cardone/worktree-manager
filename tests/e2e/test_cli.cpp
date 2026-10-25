@@ -1844,7 +1844,9 @@ TEST_CASE("wt remove refuses the main worktree") {
 
     // The refusal must follow the worktree, not the name "main".
     std::string branch;
-    SECTION("on main") { branch = "main"; }
+    SECTION("on main") {
+        branch = "main";
+    }
     SECTION("on another branch") {
         branch = "foo";
         git(box, repo, {"switch", "-q", "-c", "foo"});
@@ -2268,6 +2270,32 @@ TEST_CASE("wt merge aborts a merge Git stops without conflicts") {
     CHECK_FALSE(fs::exists(repo / "a.txt"));
 }
 
+TEST_CASE(
+    "wt merge doesn't call main restored when it's no longer checked out") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature");
+    commit_file(box, path, "a.txt", "a\n");
+    commit_file(box, repo, "b.txt", "b\n");
+    git(box, repo, {"branch", "other"});
+    // After the abort, HEAD is at the same commit, but on another branch.
+    const fs::path hook = repo / ".git" / "hooks" / "pre-merge-commit";
+    write_file(hook,
+               "#!/bin/sh\ngit symbolic-ref HEAD refs/heads/other\n"
+               "exit 1\n");
+    fs::permissions(hook, fs::perms::owner_all);
+
+    auto r = run_wt(box, repo, {"merge", "feature"});
+    CHECK(r.code == 4);
+    CHECK(r.out.empty());
+    CHECK_THAT(r.err, StartsWith("wt: git error: the merge failed, and wt "
+                                 "could not restore main: main's worktree no "
+                                 "longer has main checked out\n"));
+    CHECK_THAT(r.err, !ContainsSubstring("was restored"));
+    CHECK(git_output(box, repo, {"symbolic-ref", "HEAD"}) ==
+          "refs/heads/other");
+}
+
 TEST_CASE("wt merge reports a merge Git refuses to start") {
     Sandbox box;
     const fs::path repo = make_repo(box, box.work() / "repo");
@@ -2329,6 +2357,24 @@ TEST_CASE("wt merge fails when Git succeeds but leaves main's worktree dirty") {
     // The merge itself happened and is left in place, along with the file.
     CHECK(head_of(box, repo) == head_of(box, path));
     CHECK(read_file(repo / "stray.txt") == "x\n");
+}
+
+TEST_CASE("wt merge fails when Git succeeds but main's worktree leaves main") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature");
+    commit_file(box, path, "a.txt", "a\n");
+    // main contains the task, but its worktree is detached at the same commit.
+    const fs::path hook = repo / ".git" / "hooks" / "post-merge";
+    write_file(hook, "#!/bin/sh\ngit checkout -q --detach\n");
+    fs::permissions(hook, fs::perms::owner_all);
+
+    auto r = run_wt(box, repo, {"merge", "feature"});
+    CHECK(r.code == 4);
+    CHECK(r.out.empty());
+    CHECK_THAT(r.err,
+               StartsWith("wt: git error: git merge reported success, but "
+                          "main's worktree no longer has main checked out\n"));
 }
 
 TEST_CASE("wt merge explains how to land a task when merge.ff is only") {

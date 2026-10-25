@@ -83,6 +83,7 @@ When a task has merged `main` in, landing it fast-forwards, so `main`'s first-pa
 Hooks run after Git has done its work and can undo or change it without Git failing: a `post-checkout` hook can switch a new worktree to another branch, and a `post-merge` hook can reset the merge away.
 `wt` used to report success on exit code 0 alone, so `wt merge` printed "✓ Merged" for a task `main` didn't contain, and `wt new` printed the path of a worktree on the wrong branch.
 `wt new`, `wt merge`, and `wt remove` now confirm the result from Git's and the filesystem's current state before reporting success (see `AGENTS.md` section 3).
+Matching HEAD's commit isn't enough: a hook can point HEAD at another branch, or detach it, at the same commit, so `wt merge` also checks the integration branch's worktree still has that branch checked out, after a successful merge and before calling a failed one undone.
 
 ### Ancestry is enough to prove a landed branch is safe to delete
 

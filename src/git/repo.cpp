@@ -168,6 +168,17 @@ std::optional<std::string> resolve_commit(const fs::path& dir,
     return first_line(r.out);
 }
 
+std::optional<std::string> head_branch(const fs::path& dir) {
+    const Result r = run(dir, {"symbolic-ref", "--quiet", "HEAD"});
+    if (r.exit_code == kNotFound) {
+        return std::nullopt;
+    }
+    if (r.exit_code != 0) {
+        throw Error(error_message(r.err));
+    }
+    return first_line(r.out);
+}
+
 bool is_ancestor(const fs::path& dir, std::string_view ancestor,
                  std::string_view commit) {
     const Result r = run(dir, {"merge-base", "--is-ancestor",

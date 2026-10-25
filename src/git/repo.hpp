@@ -44,6 +44,10 @@ bool ignores_case(const std::filesystem::path& dir);
 std::optional<std::string> resolve_commit(const std::filesystem::path& dir,
                                           std::string_view name);
 
+// The branch HEAD points to in the worktree at `dir`, as a full ref (e.g.
+// "refs/heads/main"), or nothing if HEAD is detached.
+std::optional<std::string> head_branch(const std::filesystem::path& dir);
+
 // Reports whether `ancestor` is `commit` or one of its ancestors.
 bool is_ancestor(const std::filesystem::path& dir, std::string_view ancestor,
                  std::string_view commit);
