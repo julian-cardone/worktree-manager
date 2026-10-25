@@ -42,10 +42,12 @@ struct StatusResult {
     Changes changes;     // only filled in when clean or dirty
 };
 
-// Parses `git worktree list --porcelain -z` output.
+// Parses `git worktree list --porcelain -z` output. Throws an internal
+// wt::Error if it isn't in the expected format.
 std::vector<Worktree> parse_worktree_list(std::string_view porcelain);
 
-// Parses `git status --porcelain=v2 -z` output.
+// Parses `git status --porcelain=v2 -z` output. Throws an internal wt::Error
+// if it isn't in the expected format.
 Changes parse_status(std::string_view porcelain);
 
 // Lists every worktree of the repository containing `dir`, main worktree
@@ -64,8 +66,9 @@ bool worktree_contains(const Worktree& worktree,
 // The worktree in which `branch` (a short name) is being rebased, if any.
 // Mid-rebase, the worktree is detached and the branch still points at its old
 // commits, so nothing in `git worktree list` shows the branch is in use.
-// `common` is the repository's shared Git directory. Throws Error if a
-// worktree's rebase state can't be read.
+// `common` is the repository's shared Git directory. Throws a refused
+// wt::Error if a worktree's rebase state can't be read, since a branch that
+// might be mid-rebase isn't safe to use.
 std::optional<std::filesystem::path> rebasing_worktree(
     const std::vector<Worktree>& worktrees, const std::filesystem::path& common,
     std::string_view branch);

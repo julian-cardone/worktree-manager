@@ -9,6 +9,7 @@ include(Catch)
 add_executable(wt_unit_tests
   unit/test_app.cpp
   unit/test_container.cpp
+  unit/test_error.cpp
   unit/test_format.cpp
   unit/test_task.cpp
   unit/test_worktree.cpp)

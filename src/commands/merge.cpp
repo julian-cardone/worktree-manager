@@ -1,6 +1,7 @@
 #include "commands/merge.hpp"
 
 #include "commands/task_worktree.hpp"
+#include "error.hpp"
 #include "git/git.hpp"
 #include "git/repo.hpp"
 #include "git/worktree.hpp"
@@ -11,7 +12,6 @@
 #include <ostream>
 #include <set>
 #include <sstream>
-#include <stdexcept>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -44,8 +44,8 @@ void report_behind(const Context& ctx, const std::string& task,
                    const git::Worktree* source) {
     const std::string shown_task = ui::printable(task);
     const std::string shown_base = ui::printable(base);
-    ctx.err << "wt: error: cannot fast-forward " << shown_base << " to "
-            << shown_task << "\n\n"
+    ctx.err << error_prefix(ErrorKind::refused) << "cannot fast-forward "
+            << shown_base << " to " << shown_task << "\n\n"
             << shown_task << " is " << behind
             << (behind == 1 ? " commit" : " commits") << " behind "
             << shown_base << ", and merge.ff is set to \"only\".\n";
@@ -73,22 +73,24 @@ void check_destination(const git::Worktree& dest, const std::string& base) {
         case git::Status::clean:
             break;
         case git::Status::dirty:
-            throw std::runtime_error(
+            throw Error(
+                ErrorKind::refused,
                 where +
-                " has uncommitted changes; commit or stash them before "
-                "merging into " +
-                base);
+                    " has uncommitted changes; commit or stash them before "
+                    "merging into " +
+                    base);
         case git::Status::missing:
-            throw std::runtime_error(where + " no longer exists");
+            throw Error(ErrorKind::user, where + " no longer exists");
         case git::Status::bare:
-            throw std::runtime_error("cannot merge into a bare repository");
+            throw Error(ErrorKind::user, "cannot merge into a bare repository");
         case git::Status::unknown:
-            throw std::runtime_error("cannot read the status of " + where +
-                                     ": " + status.detail);
+            throw Error(ErrorKind::refused, "cannot read the status of " +
+                                                where + ": " + status.detail);
     }
     if (auto operation = git::operation_in_progress(dest.path)) {
-        throw std::runtime_error(where + " is in the middle of " + *operation +
-                                 "; finish or abort it first");
+        throw Error(ErrorKind::refused, where + " is in the middle of " +
+                                            *operation +
+                                            "; finish or abort it first");
     }
 }
 
@@ -102,16 +104,17 @@ void check_source(const git::Worktree& source, const std::string& task) {
         case git::Status::missing:
             return;
         case git::Status::dirty:
-            throw std::runtime_error(
+            throw Error(
+                ErrorKind::refused,
                 "the worktree for '" + task +
-                "' has uncommitted changes, which the merge wouldn't "
-                "include; commit or stash them first (`wt status " +
-                task + "` shows them)");
+                    "' has uncommitted changes, which the merge wouldn't "
+                    "include; commit or stash them first (`wt status " +
+                    task + "` shows them)");
         case git::Status::bare:
         case git::Status::unknown:
-            throw std::runtime_error("cannot read the status of " +
-                                     source.path.string() + ": " +
-                                     status.detail);
+            throw Error(ErrorKind::refused, "cannot read the status of " +
+                                                source.path.string() + ": " +
+                                                status.detail);
     }
 }
 
@@ -144,9 +147,10 @@ std::set<std::string> ignored_in_the_way(const git::Worktree& dest,
                 break;
             }
             if (ec) {
-                throw std::runtime_error("cannot inspect " +
-                                         (dest.path / relative).string() +
-                                         ": " + ec.message());
+                throw Error(ErrorKind::refused,
+                            "cannot inspect " +
+                                (dest.path / relative).string() + ": " +
+                                ec.message());
             }
             if (type != fs::file_type::directory ||
                 relative == fs::path(file)) {
@@ -240,31 +244,32 @@ int merge_command(const Context& ctx, const std::string& task) {
     const auto worktrees = git::list_worktrees(ctx.cwd);
     if (!git::is_valid_branch_name(ctx.cwd, task) ||
         !git::ref_exists(ctx.cwd, "refs/heads/" + task)) {
-        throw std::runtime_error("no branch named '" + task + "'");
+        throw Error(ErrorKind::user, "no branch named '" + task + "'");
     }
     const std::string base = git::integration_branch(ctx.cwd);
     if (task == base) {
-        throw std::runtime_error("'" + task +
-                                 "' is the integration branch; there is "
-                                 "nothing to merge it into");
+        throw Error(ErrorKind::user, "'" + task +
+                                         "' is the integration branch; there "
+                                         "is nothing to merge it into");
     }
 
     // Mid-rebase, the branch still points at the commits being rewritten.
     if (const auto where =
             git::rebasing_worktree(worktrees, git::common_dir(ctx.cwd), task)) {
-        throw std::runtime_error(
-            "'" + task + "' is being rebased in " + where->string() +
-            "; finish the rebase (`git rebase --continue`) or abort it (`git "
-            "rebase --abort`), then merge again");
+        throw Error(ErrorKind::refused,
+                    "'" + task + "' is being rebased in " + where->string() +
+                        "; finish the rebase (`git rebase --continue`) or "
+                        "abort it (`git rebase --abort`), then merge again");
     }
 
     // Merging needs a checkout of the integration branch. wt uses the one
     // that exists rather than switching some worktree over to it.
     const git::Worktree* dest = find_branch_worktree(worktrees, base);
     if (dest == nullptr) {
-        throw std::runtime_error("the integration branch '" + base +
-                                 "' isn't checked out in any worktree; "
-                                 "check it out to merge into it");
+        throw Error(ErrorKind::user, "the integration branch '" + base +
+                                         "' isn't checked out in any "
+                                         "worktree; check it out to merge "
+                                         "into it");
     }
     check_destination(*dest, base);
     const git::Worktree* source = find_branch_worktree(worktrees, task);
@@ -284,29 +289,31 @@ int merge_command(const Context& ctx, const std::string& task) {
     // Git would refuse too, but without saying how to get the task landed.
     if (divergence.behind != 0 && fast_forward_only(dest->path)) {
         report_behind(ctx, task, base, divergence.behind, source);
-        return 1;
+        return exit_code(ErrorKind::refused);
     }
 
     const auto before = git::resolve_commit(dest->path, "HEAD");
     if (!before) {
-        throw std::runtime_error("cannot read HEAD in " + dest->path.string());
+        throw Error(ErrorKind::internal,
+                    "cannot read HEAD in " + dest->path.string());
     }
     // What gets merged is checked against this, so a commit added to the task
     // meanwhile can't make the check fail; it would land too.
     const auto task_commit = git::resolve_commit(ctx.cwd, "refs/heads/" + task);
     if (!task_commit) {
-        throw std::runtime_error("cannot read branch '" + task + "'");
+        throw Error(ErrorKind::internal, "cannot read branch '" + task + "'");
     }
     if (const auto in_the_way = ignored_in_the_way(*dest, *before, task);
         !in_the_way.empty()) {
-        ctx.err << "wt: error: cannot merge " << shown_task << " into "
-                << shown_base << "\n\nMerging would overwrite these ignored "
+        ctx.err << error_prefix(ErrorKind::refused) << "cannot merge "
+                << shown_task << " into " << shown_base
+                << "\n\nMerging would overwrite these ignored "
                 << "files in " << shown_base << "'s worktree:\n";
         for (const auto& path : in_the_way) {
             ctx.err << "- " << ui::printable(path) << '\n';
         }
         ctx.err << "\nMove them out of the way first.\n";
-        return 1;
+        return exit_code(ErrorKind::refused);
     }
 
     // The full ref can't be mistaken for a tag of the same name; the message
@@ -320,12 +327,15 @@ int merge_command(const Context& ctx, const std::string& task) {
         // Nothing is undone here: the merge did happen, and guessing what
         // else changed could lose more than it fixes.
         if (auto problem = merge_problem(*dest, base, task, *task_commit)) {
-            ctx.err << "wt: error: git merge reported success, but "
+            ctx.err << error_prefix(ErrorKind::git)
+                    << "git merge reported success, but "
                     << ui::printable(*problem) << '\n';
             print_git_output(ctx, result);
-            ctx.err << "\nInspect " << shown_base << "'s worktree with `git -C "
-                    << ui::printable(dest->path.string()) << " status`.\n";
-            return 1;
+            ctx.err << "\nThe result could not be verified; inspect "
+                    << shown_base << "'s worktree with `git -C "
+                    << ui::printable(dest->path.string())
+                    << " status` before retrying.\n";
+            return exit_code(ErrorKind::git);
         }
         ctx.out << "✓ Merged " << shown_task << " into " << shown_base << '\n';
         return 0;
@@ -334,33 +344,38 @@ int merge_command(const Context& ctx, const std::string& task) {
     // Without MERGE_HEAD, Git refused before merging anything (e.g. an
     // untracked file in the way), so there is nothing to undo.
     if (!git::resolve_commit(dest->path, "MERGE_HEAD")) {
-        ctx.err << "wt: error: git merge failed with exit code "
-                << result.exit_code << '\n';
+        ctx.err << error_prefix(ErrorKind::git)
+                << "git merge failed with exit code " << result.exit_code
+                << '\n';
         print_git_output(ctx, result);
         if (git::resolve_commit(dest->path, "HEAD") == before) {
             ctx.err << '\n' << shown_base << " is unchanged.\n";
         }
-        return 1;
+        return exit_code(ErrorKind::git);
     }
 
     const auto conflicts = conflicted_files(dest->path);
     if (auto problem = abort_merge(*dest, *before)) {
-        ctx.err << "wt: error: the merge failed, and wt could not restore "
-                << shown_base << ": " << ui::printable(*problem) << '\n';
+        ctx.err << error_prefix(ErrorKind::git)
+                << "the merge failed, and wt could not restore " << shown_base
+                << ": " << ui::printable(*problem) << '\n';
         print_git_output(ctx, result);
         ctx.err << "\nInspect " << shown_base << "'s worktree with `git -C "
                 << ui::printable(dest->path.string()) << " status`.\n";
-        return 1;
+        return exit_code(ErrorKind::git);
     }
 
+    ErrorKind kind = ErrorKind::conflict;
     if (conflicts.empty()) {
         // Git stopped mid-merge without conflicts, e.g. a hook rejected the
         // merge commit.
-        ctx.err << "wt: error: git merge failed with exit code "
-                << result.exit_code << '\n';
+        kind = ErrorKind::git;
+        ctx.err << error_prefix(ErrorKind::git)
+                << "git merge failed with exit code " << result.exit_code
+                << '\n';
         print_git_output(ctx, result);
     } else {
-        ctx.err << "wt: error: merge blocked: " << shown_task
+        ctx.err << error_prefix(ErrorKind::conflict) << shown_task
                 << " conflicts with " << shown_base << "\n\nConflicts:\n";
         for (const auto& file : conflicts) {
             ctx.err << "- " << ui::printable(file) << '\n';
@@ -368,7 +383,7 @@ int merge_command(const Context& ctx, const std::string& task) {
     }
     ctx.err << '\n'
             << shown_base << " was restored; no merge remains in progress.\n";
-    return 1;
+    return exit_code(kind);
 }
 
 }  // namespace wt

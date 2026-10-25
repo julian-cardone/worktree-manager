@@ -69,6 +69,23 @@ The version is set by `project(wt VERSION ...)` in `CMakeLists.txt`.
 `wt` always works on the repository containing the current directory.
 It ignores variables that would point Git at another repository, such as `GIT_DIR`, `GIT_WORK_TREE`, and `GIT_INDEX_FILE`, so it behaves the same when run from a Git hook, `git rebase --exec`, or a `!` alias.
 
+### Errors and exit codes
+
+When a command doesn't do what was asked, the first line on stderr and the exit code say why, so people and agents can tell a deliberate refusal from something that broke.
+Scripts should treat any nonzero exit code as failure, and branch on a specific code only when they deliberately handle that category.
+Earlier builds exited 1 for every failure; the categories were introduced as a deliberate breaking change while `wt` is in early development.
+
+
+| Exit code | Prefix | Meaning | What to do |
+| --- | --- | --- | --- |
+| 0 | | Success. | |
+| 1 | `wt: error:` | The request or setup needs fixing, e.g. no such task, an invalid name, or a missing integration branch. | Fix what the message names. |
+| 2 | `wt: refused:` | `wt` deliberately stopped, because going ahead could lose work or touch something it doesn't own, or because it couldn't verify that it wouldn't. Nothing is broken. | Deal with what is in the way (the message lists it), then rerun. |
+| 3 | `wt: conflict:` | A merge conflicted. `wt` aborted it; conflicts are never resolved for you. | Resolve the conflicts in the task's worktree, then rerun. |
+| 4 | `wt: git error:` | A Git command `wt` ran failed, e.g. outside a repository or when a hook fails, or Git reported success but `wt` couldn't confirm the result (a hook may have changed it). | Act on Git's message; `wt` says what, if anything, was left behind. If the result couldn't be verified, inspect the state before retrying. |
+| 5 | `wt: internal error:` | `wt` hit something it doesn't understand, such as unexpected Git output. Probably a bug in `wt`. | Check the affected worktrees with `git status` before retrying. |
+| 100+ | | The command line couldn't be parsed (from CLI11). | See `wt --help`. |
+
 ### `wt list`
 
 Works from the main checkout or any linked worktree, and always lists the main worktree first.
@@ -92,7 +109,7 @@ Paths under your home directory are shown with `~`.
 
 Checking status never modifies a worktree: `wt` runs `git status` with `--no-optional-locks`, so it won't touch the index or contend with other Git processes.
 Untracked files always count, even if `status.showUntrackedFiles` is set to `no`.
-`wt list` exits 1 outside a Git repository.
+`wt list` fails with a Git error (exit 4) outside a Git repository.
 
 ### `wt new <task>`
 
@@ -145,11 +162,11 @@ They can't start with `-` or `.`, start or end with `/`, or contain `//` or `..`
 
 If `origin/<task>` exists, `wt` warns but still creates a new local branch from the integration branch, without tracking it.
 
-**If Git fails partway**, for example because a `post-checkout` hook exits non-zero after the worktree was created, `wt new` exits 1, shows Git's output, and lists the branch or directory left behind.
+**If Git fails partway**, for example because a `post-checkout` hook exits non-zero after the worktree was created, `wt new` exits 4, shows Git's output, and lists the branch or directory left behind.
 It never removes them itself, but says how: `wt remove <task>` for the worktree, then `git branch -d <task>` for the branch.
 
 **After Git succeeds**, `wt new` checks that Git lists a worktree at the target path with `<task>` checked out, since a `post-checkout` hook could have switched or deleted it.
-If not, it exits 1 with nothing on stdout, says what it found, and removes nothing.
+If not, it exits 4 with nothing on stdout, says what it found, and removes nothing.
 
 ### `wt status <task>`
 
@@ -215,7 +232,7 @@ If the integration branch already has every commit on `<task>`, it says so and d
 
 ```
 $ wt merge feature-x
-wt: error: merge blocked: feature-x conflicts with main
+wt: conflict: feature-x conflicts with main
 
 Conflicts:
 - src/bar.cpp
@@ -234,7 +251,7 @@ Merging the integration branch into the task instead (`git merge main`) also wor
 
 ```
 $ wt merge feature-x
-wt: error: cannot fast-forward main to feature-x
+wt: refused: cannot fast-forward main to feature-x
 
 feature-x is 2 commits behind main, and merge.ff is set to "only".
 Rebase it onto main in its worktree, resolving any conflicts there:
@@ -252,7 +269,7 @@ If Git refuses to start the merge (for example, because of a branch's `mergeOpti
 If the abort or the check after it fails, `wt merge` says what is wrong and where to look with `git status`.
 After Git reports success, `wt merge` checks that the integration branch contains the task, and that its worktree is on it, clean, and not mid-operation, since a `post-merge` hook runs after the merge and could undo or add to it.
 If not, it says what is wrong and where to look, and leaves the merge in place.
-All failures exit 1.
+Refusals exit 2, conflicts 3, and Git failures 4, including a merge Git reported but the check after it didn't find (see [Errors and exit codes](#errors-and-exit-codes)).
 
 ### `wt remove <task>`
 
@@ -276,7 +293,7 @@ It works from the main checkout or any other worktree of the repository.
 
 ```
 $ wt remove feature-x
-wt: error: cannot remove feature-x
+wt: refused: cannot remove feature-x
 
   1 untracked file
   2 ignored files
@@ -306,8 +323,8 @@ Git itself deletes ignored files (such as `.env` files or build output) with the
 This also works if the whole container was deleted.
 Other stale worktrees are left alone, unlike `git worktree prune`.
 
-**If Git fails**, `wt remove` exits 1, shows Git's output, and says whether the worktree's directory is still there.
-After Git reports success, `wt remove` checks that Git no longer lists the worktree and its directory is gone, and exits 1 if not.
+**If Git fails**, `wt remove` exits 4, shows Git's output, and says whether the worktree's directory is still there.
+After Git reports success, `wt remove` checks that Git no longer lists the worktree and its directory is gone, and exits 4 if not.
 
 ## Project layout
 
@@ -315,6 +332,7 @@ After Git reports success, `wt remove` checks that Git no longer lists the workt
 CMakeLists.txt        # top-level build; produces build/wt
 src/
   main.cpp            # entry point; delegates to wt::run
+  error.hpp           # wt::Error and its kinds, exit codes, and message prefixes
   commands/           # CLI definition and command handlers; commands take a wt::Context
   git/                # runs git and parses its output
   layout/             # where wt puts worktrees: task names and the owned container

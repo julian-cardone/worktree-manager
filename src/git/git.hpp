@@ -1,7 +1,8 @@
 #pragma once
 
+#include "error.hpp"
+
 #include <filesystem>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -15,9 +16,10 @@ struct Result {
 };
 
 // A Git failure worth reporting to the user as-is.
-class Error : public std::runtime_error {
+class Error : public wt::Error {
 public:
-    using std::runtime_error::runtime_error;
+    explicit Error(const std::string& message)
+        : wt::Error(ErrorKind::git, message) {}
 };
 
 // Runs `git -C <dir> <args...>` and captures its output. Arguments are passed

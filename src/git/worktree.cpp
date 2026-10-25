@@ -42,7 +42,8 @@ std::vector<Worktree> parse_worktree_list(std::string_view porcelain) {
             continue;
         }
         if (!in_record) {
-            throw Error("unexpected output from git worktree list");
+            throw wt::Error(ErrorKind::internal,
+                            "unexpected output from git worktree list");
         }
         Worktree& worktree = worktrees.back();
         if (key == "HEAD") {
@@ -70,6 +71,8 @@ Changes parse_status(std::string_view porcelain) {
     // Each entry is NUL-terminated. A rename or copy ("2") is followed by an
     // extra entry holding the original path, which must not be read as an
     // entry of its own: a path like "? x" would otherwise count as untracked.
+    constexpr const char* kUnexpectedStatus =
+        "unexpected output from git status";
     Changes changes;
     bool original_path_next = false;
     std::size_t pos = 0;
@@ -86,7 +89,7 @@ Changes parse_status(std::string_view porcelain) {
             continue;
         }
         if (entry.size() < 2 || entry[1] != ' ') {
-            throw Error("unexpected output from git status");
+            throw wt::Error(ErrorKind::internal, kUnexpectedStatus);
         }
         switch (entry.front()) {
             case '1':
@@ -94,7 +97,7 @@ Changes parse_status(std::string_view porcelain) {
                 // "<type> XY ...": X is the staged state, Y the unstaged
                 // one, and '.' means unchanged.
                 if (entry.size() < 4) {
-                    throw Error("unexpected output from git status");
+                    throw wt::Error(ErrorKind::internal, kUnexpectedStatus);
                 }
                 changes.staged += entry[2] != '.' ? 1 : 0;
                 changes.modified += entry[3] != '.' ? 1 : 0;
@@ -112,7 +115,7 @@ Changes parse_status(std::string_view porcelain) {
             case '#':  // headers, e.g. from --branch
                 break;
             default:
-                throw Error("unexpected output from git status");
+                throw wt::Error(ErrorKind::internal, kUnexpectedStatus);
         }
     }
     return changes;
@@ -123,7 +126,7 @@ std::vector<Worktree> list_worktrees(const fs::path& dir) {
     const Result r = run(dir, {"worktree", "list", "--porcelain", "-z"});
     if (r.exit_code != 0) {
         if (r.err.find("unknown switch") != std::string::npos) {
-            throw Error("wt requires Git 2.36 or newer");
+            throw wt::Error(ErrorKind::user, "wt requires Git 2.36 or newer");
         }
         throw Error(error_message(r.err));
     }
@@ -183,7 +186,7 @@ std::optional<std::string> read_first_line(const fs::path& path) {
     std::ifstream in(path);
     std::string line;
     if (ec || !in || (!std::getline(in, line) && !in.eof())) {
-        throw Error("cannot read " + path.string());
+        throw wt::Error(ErrorKind::refused, "cannot read " + path.string());
     }
     return line;
 }
@@ -235,7 +238,8 @@ std::optional<fs::path> rebasing_worktree(
         return admin;
     }
     if (ec) {
-        throw Error("cannot read " + linked.string() + ": " + ec.message());
+        throw wt::Error(ErrorKind::refused,
+                        "cannot read " + linked.string() + ": " + ec.message());
     }
     return std::nullopt;
 }
@@ -290,7 +294,7 @@ StatusResult worktree_status(const Worktree& worktree, bool count_ignored) {
     Changes changes;
     try {
         changes = parse_status(r.out);
-    } catch (const Error& e) {
+    } catch (const wt::Error& e) {
         return {Status::unknown, e.what(), {}};
     }
     return {changes.empty() ? Status::clean : Status::dirty, {}, changes};

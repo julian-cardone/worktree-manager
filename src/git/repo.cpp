@@ -116,7 +116,8 @@ Divergence divergence(const fs::path& dir, std::string_view ref,
     auto read_count = [&](std::size_t& count, char separator) {
         const auto [next, ec] = std::from_chars(pos, end, count);
         if (ec != std::errc() || next == end || *next != separator) {
-            throw Error("unexpected output from git rev-list");
+            throw wt::Error(ErrorKind::internal,
+                            "unexpected output from git rev-list");
         }
         pos = next + 1;
     };
@@ -132,8 +133,10 @@ std::string integration_branch(const fs::path& dir) {
         const std::string name = first_line(config.out);
         if (!is_valid_branch_name(dir, name) ||
             !local_branch_exists(dir, name)) {
-            throw Error("wt.integrationBranch is set to '" + name +
-                        "', but there is no local branch with that name");
+            throw wt::Error(
+                ErrorKind::user,
+                "wt.integrationBranch is set to '" + name +
+                    "', but there is no local branch with that name");
         }
         return name;
     }
@@ -147,18 +150,20 @@ std::string integration_branch(const fs::path& dir) {
         constexpr std::string_view kPrefix = "refs/remotes/origin/";
         const std::string target = first_line(origin.out);
         if (!target.starts_with(kPrefix)) {
-            throw Error("origin/HEAD points to " + target +
-                        ", not a branch of origin");
+            throw wt::Error(ErrorKind::user, "origin/HEAD points to " + target +
+                                                 ", not a branch of origin");
         }
         const std::string name = target.substr(kPrefix.size());
         if (!is_valid_branch_name(dir, name) ||
             !local_branch_exists(dir, name)) {
-            throw Error("origin's default branch is '" + name +
-                        "', but there is no local branch with that name; "
-                        "create it with `git branch " +
-                        name + " origin/" + name +
-                        "`, or choose another with `git config "
-                        "wt.integrationBranch <branch>`");
+            throw wt::Error(
+                ErrorKind::user,
+                "origin's default branch is '" + name +
+                    "', but there is no local branch with that name; "
+                    "create it with `git branch " +
+                    name + " origin/" + name +
+                    "`, or choose another with `git config "
+                    "wt.integrationBranch <branch>`");
         }
         return name;
     }
@@ -172,9 +177,11 @@ std::string integration_branch(const fs::path& dir) {
         }
     }
     if (run(dir, {"rev-parse", "--verify", "--quiet", "HEAD"}).exit_code != 0) {
-        throw Error("the repository has no commits yet; make one first");
+        throw wt::Error(ErrorKind::user,
+                        "the repository has no commits yet; make one first");
     }
-    throw Error(
+    throw wt::Error(
+        ErrorKind::user,
         "cannot tell which branch to start from: there is no local main or "
         "master branch; choose one with `git config wt.integrationBranch "
         "<branch>`");

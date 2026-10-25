@@ -5,6 +5,7 @@
 #include "commands/new.hpp"
 #include "commands/remove.hpp"
 #include "commands/status.hpp"
+#include "error.hpp"
 #include "ui/format.hpp"
 
 #include <CLI/CLI.hpp>
@@ -14,6 +15,20 @@
 #include <string>
 
 namespace wt {
+
+namespace {
+
+int report_error(const Context& ctx, ErrorKind kind, const char* message) {
+    // Messages can quote branch names and paths, so sanitize them.
+    ctx.err << error_prefix(kind) << ui::printable(message) << '\n';
+    if (kind == ErrorKind::internal) {
+        ctx.err << "wt: this is probably a bug in wt; check the state of the "
+                   "affected worktrees with `git status` before retrying\n";
+    }
+    return exit_code(kind);
+}
+
+}  // namespace
 
 std::unique_ptr<CLI::App> make_app() {
     auto app = std::make_unique<CLI::App>(
@@ -87,12 +102,13 @@ int run(int argc, const char* const* argv, const Context& ctx) {
         }
     } catch (const CLI::ParseError& e) {
         return app->exit(e, ctx.out, ctx.err);
+    } catch (const Error& e) {
+        // Commands report most failures by throwing.
+        return report_error(ctx, e.kind(), e.what());
     } catch (const std::exception& e) {
-        // Commands report failures (e.g. git::Error) by throwing; this also
-        // keeps anything unexpected from aborting with no useful message.
-        // Messages can quote branch names and paths, so sanitize them.
-        ctx.err << "wt: error: " << ui::printable(e.what()) << '\n';
-        return 1;
+        // Anything else wasn't anticipated, e.g. a failing system call; say
+        // so rather than abort with no useful message.
+        return report_error(ctx, ErrorKind::internal, e.what());
     }
     return 0;
 }

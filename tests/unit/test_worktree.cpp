@@ -3,10 +3,13 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "support/error_kind.hpp"
+
 #include <string>
 #include <vector>
 
 using wt::git::parse_worktree_list;
+using wt::test::kind_is;
 
 namespace {
 
@@ -91,8 +94,8 @@ TEST_CASE("parse_worktree_list handles empty output") {
 }
 
 TEST_CASE("parse_worktree_list rejects attributes outside a record") {
-    CHECK_THROWS_AS(parse_worktree_list("HEAD "s + kHash + "\0\0"s),
-                    wt::git::Error);
+    CHECK_THROWS_MATCHES(parse_worktree_list("HEAD "s + kHash + "\0\0"s),
+                         wt::Error, kind_is(wt::ErrorKind::internal));
 }
 
 TEST_CASE("error_message keeps the first line of git's error") {
@@ -179,12 +182,12 @@ TEST_CASE("parse_status skips headers and lists ignored files apart") {
 }
 
 TEST_CASE("parse_status rejects output it doesn't understand") {
-    using wt::git::Error;
     using wt::git::parse_status;
-    CHECK_THROWS_AS(parse_status("garbage\0"s), Error);
-    CHECK_THROWS_AS(parse_status("1\0"s), Error);
-    CHECK_THROWS_AS(parse_status("1 M\0"s), Error);
-    CHECK_THROWS_AS(parse_status("? a\0\0"s), Error);
+    const auto internal = kind_is(wt::ErrorKind::internal);
+    CHECK_THROWS_MATCHES(parse_status("garbage\0"s), wt::Error, internal);
+    CHECK_THROWS_MATCHES(parse_status("1\0"s), wt::Error, internal);
+    CHECK_THROWS_MATCHES(parse_status("1 M\0"s), wt::Error, internal);
+    CHECK_THROWS_MATCHES(parse_status("? a\0\0"s), wt::Error, internal);
 }
 
 TEST_CASE("status_label names each status") {

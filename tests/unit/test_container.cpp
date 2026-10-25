@@ -3,6 +3,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include "support/error_kind.hpp"
 #include "support/sandbox.hpp"
 
 #include <filesystem>
@@ -12,10 +13,10 @@
 
 using Catch::Matchers::ContainsSubstring;
 using wt::layout::container_path;
-using wt::layout::ContainerError;
 using wt::layout::marker_contents;
 using wt::layout::ownership_problem;
 using wt::layout::prepare_container;
+using wt::test::kind_is;
 using wt::test::Sandbox;
 
 namespace {
@@ -58,7 +59,8 @@ TEST_CASE("container_path drops .git from a bare repository's name") {
 }
 
 TEST_CASE("container_path refuses a main worktree at the root") {
-    CHECK_THROWS_AS(container_path("/", "/.git"), ContainerError);
+    CHECK_THROWS_MATCHES(container_path("/", "/.git"), wt::Error,
+                         kind_is(wt::ErrorKind::user));
 }
 
 TEST_CASE("marker_contents names the repository") {
@@ -144,7 +146,8 @@ TEST_CASE("prepare_container leaves an unowned directory untouched") {
     fs::create_directory(container);
     write_file(container / "theirs", "data");
 
-    CHECK_THROWS_AS(prepare_container(container, common), ContainerError);
+    CHECK_THROWS_MATCHES(prepare_container(container, common), wt::Error,
+                         kind_is(wt::ErrorKind::refused));
     CHECK(read_file(container / "theirs") == "data");
     CHECK_FALSE(fs::exists(container / ".wt-managed"));
 }
@@ -152,7 +155,7 @@ TEST_CASE("prepare_container leaves an unowned directory untouched") {
 TEST_CASE("prepare_container fails cleanly when the parent is missing") {
     Sandbox box;
     const fs::path container = box.work() / "missing" / ".repo.wt-test";
-    CHECK_THROWS_AS(prepare_container(container, box.work() / ".git"),
-                    ContainerError);
+    CHECK_THROWS_MATCHES(prepare_container(container, box.work() / ".git"),
+                         wt::Error, kind_is(wt::ErrorKind::user));
     CHECK_FALSE(fs::exists(box.work() / "missing"));
 }

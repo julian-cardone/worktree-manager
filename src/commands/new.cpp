@@ -1,5 +1,6 @@
 #include "commands/new.hpp"
 
+#include "error.hpp"
 #include "git/git.hpp"
 #include "git/repo.hpp"
 #include "git/worktree.hpp"
@@ -11,7 +12,6 @@
 #include <optional>
 #include <ostream>
 #include <sstream>
-#include <stdexcept>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -30,8 +30,8 @@ bool path_exists(const fs::path& path) {
         return false;
     }
     if (ec) {
-        throw std::runtime_error("cannot inspect " + path.string() + ": " +
-                                 ec.message());
+        throw Error(ErrorKind::user,
+                    "cannot inspect " + path.string() + ": " + ec.message());
     }
     return true;
 }
@@ -47,18 +47,19 @@ void check_target_free(const std::vector<git::Worktree>& worktrees,
             continue;
         }
         if (exists) {
-            throw std::runtime_error(
-                target.string() + " is already the worktree for " +
-                (worktree.branch ? "branch " + *worktree.branch
-                                 : std::string("a detached HEAD")));
+            throw Error(ErrorKind::user,
+                        target.string() + " is already the worktree for " +
+                            (worktree.branch ? "branch " + *worktree.branch
+                                             : std::string("a detached HEAD")));
         }
-        throw std::runtime_error(
+        throw Error(
+            ErrorKind::user,
             "Git already has a worktree registered at " + target.string() +
-            " although its directory is gone; run `git worktree prune` to "
-            "forget it");
+                " although its directory is gone; run `git worktree prune` to "
+                "forget it");
     }
     if (exists) {
-        throw std::runtime_error(target.string() + " already exists");
+        throw Error(ErrorKind::user, target.string() + " already exists");
     }
 }
 
@@ -68,8 +69,9 @@ void check_target_free(const std::vector<git::Worktree>& worktrees,
 // wrong would lose more than it saves.
 void report_failure(const Context& ctx, const git::Result& result,
                     const std::string& branch, const fs::path& target) {
-    ctx.err << "wt: error: git worktree add failed with exit code "
-            << result.exit_code << '\n';
+    ctx.err << error_prefix(ErrorKind::git)
+            << "git worktree add failed with exit code " << result.exit_code
+            << '\n';
     std::istringstream lines(result.err);
     for (std::string line; std::getline(lines, line);) {
         ctx.err << "  " << ui::printable(line) << '\n';
@@ -140,17 +142,18 @@ std::optional<std::string> creation_problem(const Context& ctx,
 
 int new_command(const Context& ctx, const std::string& task) {
     if (auto problem = layout::task_name_problem(task)) {
-        throw std::runtime_error("invalid task name '" + task +
-                                 "': " + *problem);
+        throw Error(ErrorKind::user,
+                    "invalid task name '" + task + "': " + *problem);
     }
     // Also confirms we're inside a repository, with Git's own error if not.
     const auto worktrees = git::list_worktrees(ctx.cwd);
     if (worktrees.empty()) {
-        throw std::runtime_error("git reported no worktrees");
+        throw Error(ErrorKind::internal, "git reported no worktrees");
     }
     if (!git::is_valid_branch_name(ctx.cwd, task)) {
-        throw std::runtime_error("invalid task name '" + task +
-                                 "': Git doesn't accept it as a branch name");
+        throw Error(ErrorKind::user,
+                    "invalid task name '" + task +
+                        "': Git doesn't accept it as a branch name");
     }
     const std::string& branch = task;
     const std::string base = git::integration_branch(ctx.cwd);
@@ -163,7 +166,7 @@ int new_command(const Context& ctx, const std::string& task) {
     const fs::path target = container / layout::task_folder_name(task);
 
     if (git::ref_exists(ctx.cwd, "refs/heads/" + branch)) {
-        throw std::runtime_error("branch '" + branch + "' already exists");
+        throw Error(ErrorKind::user, "branch '" + branch + "' already exists");
     }
     layout::prepare_container(container, common);
     check_target_free(worktrees, target);
@@ -181,15 +184,17 @@ int new_command(const Context& ctx, const std::string& task) {
                            target.string(), "refs/heads/" + base});
     if (result.exit_code != 0) {
         report_failure(ctx, result, branch, target);
-        return 1;
+        return exit_code(ErrorKind::git);
     }
     // Nothing goes on stdout, so `cd "$(wt new ...)"` can't land somewhere
     // unexpected.
     if (auto problem = creation_problem(ctx, branch, target)) {
-        ctx.err << "wt: error: git worktree add reported success, but "
+        ctx.err << error_prefix(ErrorKind::git)
+                << "git worktree add reported success, but "
                 << ui::printable(*problem) << '\n'
-                << "wt: nothing was removed; `wt list` shows what is there\n";
-        return 1;
+                << "wt: the result could not be verified and nothing was "
+                   "removed; inspect it with `wt list` before retrying\n";
+        return exit_code(ErrorKind::git);
     }
 
     ctx.err << "wt: created branch " << ui::printable(branch) << " from "

@@ -1,6 +1,7 @@
 #include "commands/remove.hpp"
 
 #include "commands/task_worktree.hpp"
+#include "error.hpp"
 #include "git/git.hpp"
 #include "git/repo.hpp"
 #include "git/worktree.hpp"
@@ -12,7 +13,6 @@
 #include <optional>
 #include <ostream>
 #include <sstream>
-#include <stdexcept>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -33,9 +33,10 @@ void check_managed(const Context& ctx,
     const fs::path container =
         layout::container_path(worktrees.front().path, common);
     if (worktree.path.parent_path() != container) {
-        throw std::runtime_error(
-            "the worktree for '" + task + "' at " + worktree.path.string() +
-            " wasn't created by wt, so wt won't remove it");
+        throw Error(ErrorKind::refused,
+                    "the worktree for '" + task + "' at " +
+                        worktree.path.string() +
+                        " wasn't created by wt, so wt won't remove it");
     }
 
     // A container that's gone can't hold the worktree's files, so there is
@@ -45,10 +46,10 @@ void check_managed(const Context& ctx,
         return;
     }
     if (auto problem = layout::ownership_problem(container, common)) {
-        throw std::runtime_error(
-            container.string() +
-            " exists but wt can't confirm it manages it (" + *problem +
-            "), so wt won't remove anything from it");
+        throw Error(ErrorKind::refused,
+                    container.string() +
+                        " exists but wt can't confirm it manages it (" +
+                        *problem + "), so wt won't remove anything from it");
     }
 }
 
@@ -78,7 +79,8 @@ void report_blocked(const Context& ctx, const std::string& task,
         add_count(lines, changes.ignored.size(), "ignored");
     }
 
-    ctx.err << "wt: error: cannot remove " << ui::printable(task) << "\n\n";
+    ctx.err << error_prefix(ErrorKind::refused) << "cannot remove "
+            << ui::printable(task) << "\n\n";
     for (const auto& line : lines) {
         ctx.err << "  " << line << '\n';
     }
@@ -105,8 +107,9 @@ void report_blocked(const Context& ctx, const std::string& task,
 
 void report_failure(const Context& ctx, const git::Result& result,
                     const fs::path& path) {
-    ctx.err << "wt: error: git worktree remove failed with exit code "
-            << result.exit_code << '\n';
+    ctx.err << error_prefix(ErrorKind::git)
+            << "git worktree remove failed with exit code " << result.exit_code
+            << '\n';
     std::istringstream lines(result.err);
     for (std::string line; std::getline(lines, line);) {
         ctx.err << "  " << ui::printable(line) << '\n';
@@ -147,64 +150,67 @@ int remove_command(const Context& ctx, const std::string& task,
 
     // Git lists the main worktree first; it is the repository itself.
     if (&worktree == &worktrees.front()) {
-        throw std::runtime_error("'" + task +
-                                 "' is checked out in the main worktree, "
-                                 "which wt never removes");
+        throw Error(ErrorKind::refused,
+                    "'" + task +
+                        "' is checked out in the main worktree, which wt "
+                        "never removes");
     }
     check_managed(ctx, worktrees, worktree, task);
     // Removing it would leave the shell (or agent) in a deleted directory.
     if (git::worktree_contains(worktree, ctx.cwd)) {
-        throw std::runtime_error("you are inside the worktree for '" + task +
-                                 "'; run wt remove from somewhere else");
+        throw Error(ErrorKind::refused,
+                    "you are inside the worktree for '" + task +
+                        "'; run wt remove from somewhere else");
     }
     // Git would follow a symlink here and delete the files it points to.
     std::error_code ec;
     const auto type = fs::symlink_status(worktree.path, ec).type();
     if (type != fs::file_type::not_found) {
         if (ec) {
-            throw std::runtime_error("cannot inspect " +
-                                     worktree.path.string() + ": " +
-                                     ec.message());
+            throw Error(ErrorKind::refused, "cannot inspect " +
+                                                worktree.path.string() + ": " +
+                                                ec.message());
         }
         if (type != fs::file_type::directory) {
-            throw std::runtime_error(
-                worktree.path.string() +
-                " is not a directory, so wt won't remove it");
+            throw Error(ErrorKind::refused,
+                        worktree.path.string() +
+                            " is not a directory, so wt won't remove it");
         }
     }
     if (worktree.locked) {
-        throw std::runtime_error(
-            "the worktree for '" + task +
-            "' is locked; if it's no longer needed, unlock it with "
-            "`git worktree unlock " +
-            worktree.path.string() + "`");
+        throw Error(ErrorKind::refused,
+                    "the worktree for '" + task +
+                        "' is locked; if it's no longer needed, unlock it with "
+                        "`git worktree unlock " +
+                        worktree.path.string() + "`");
     }
 
     const auto status = git::worktree_status(worktree, /*count_ignored=*/true);
     switch (status.status) {
         case git::Status::unknown:
-            throw std::runtime_error("cannot read the status of " +
-                                     worktree.path.string() + ": " +
-                                     status.detail + "; not removing it");
+            throw Error(ErrorKind::refused,
+                        "cannot read the status of " + worktree.path.string() +
+                            ": " + status.detail + "; not removing it");
         case git::Status::missing:
             break;
         case git::Status::bare:
             // Only the main worktree can be bare, and it was refused above.
-            throw std::runtime_error("cannot remove a bare repository");
+            throw Error(ErrorKind::internal, "cannot remove a bare repository");
         case git::Status::clean:
         case git::Status::dirty: {
             const bool ignored_block =
                 !status.changes.ignored.empty() && !delete_ignored;
             if (!status.changes.empty() || ignored_block) {
                 report_blocked(ctx, task, status.changes, !delete_ignored);
-                return 1;
+                return exit_code(ErrorKind::refused);
             }
             // WARNING: its state (e.g. a merge message) lives with the
             // worktree and would go with it, even when the files are clean.
             if (auto operation = git::operation_in_progress(worktree.path)) {
-                throw std::runtime_error("the worktree for '" + task +
-                                         "' is in the middle of " + *operation +
-                                         "; finish or abort it first");
+                throw Error(ErrorKind::refused,
+                            "the worktree for '" + task +
+                                "' is in the middle of " + *operation +
+                                "; finish or abort it first");
             }
             break;
         }
@@ -217,12 +223,15 @@ int remove_command(const Context& ctx, const std::string& task,
         git::run(ctx.cwd, {"worktree", "remove", "--", worktree.path.string()});
     if (result.exit_code != 0) {
         report_failure(ctx, result, worktree.path);
-        return 1;
+        return exit_code(ErrorKind::git);
     }
     if (auto problem = removal_problem(ctx, worktree.path)) {
-        ctx.err << "wt: error: git worktree remove reported success, but "
-                << ui::printable(*problem) << " at " << shown_path << '\n';
-        return 1;
+        ctx.err << error_prefix(ErrorKind::git)
+                << "git worktree remove reported success, but "
+                << ui::printable(*problem) << " at " << shown_path << '\n'
+                << "wt: the result could not be verified; inspect it with "
+                   "`wt list` before retrying\n";
+        return exit_code(ErrorKind::git);
     }
 
     if (status.status == git::Status::missing) {

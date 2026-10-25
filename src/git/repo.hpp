@@ -44,8 +44,9 @@ Divergence divergence(const std::filesystem::path& dir, std::string_view ref,
 
 // The local branch new work should start from. Tries, in order: the
 // wt.integrationBranch config, the branch origin/HEAD points to, then local
-// main or master. Never fetches. Throws Error, rather than guessing, if a
-// configured branch is missing or none of these exists.
+// main or master. Never fetches. Throws a user wt::Error, rather than guessing,
+// if a configured branch is missing or none of these exists, and Error if Git
+// fails.
 std::string integration_branch(const std::filesystem::path& dir);
 
 }  // namespace wt::git

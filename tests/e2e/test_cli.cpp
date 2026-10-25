@@ -250,9 +250,9 @@ TEST_CASE("arguments reach wt verbatim, without shell interpretation") {
 TEST_CASE("wt list outside a repository fails with a clear error") {
     Sandbox box;
     auto r = run_wt(box, box.work(), {"list"});
-    CHECK(r.code == 1);
+    CHECK(r.code == 4);
     CHECK(r.out.empty());
-    CHECK_THAT(r.err, StartsWith("wt: error: not a git repository"));
+    CHECK_THAT(r.err, StartsWith("wt: git error: not a git repository"));
 }
 
 TEST_CASE("wt list shows a clean main worktree") {
@@ -648,9 +648,9 @@ TEST_CASE("wt new fails in a repository with no commits") {
 TEST_CASE("wt new outside a repository fails without creating anything") {
     Sandbox box;
     auto r = run_wt(box, box.work(), {"new", "feature"});
-    CHECK(r.code == 1);
+    CHECK(r.code == 4);
     CHECK(r.out.empty());
-    CHECK_THAT(r.err, StartsWith("wt: error: not a git repository"));
+    CHECK_THAT(r.err, StartsWith("wt: git error: not a git repository"));
     CHECK(entries(box.work()).empty());
     CHECK(entries(box.root()).size() == 4);  // home, work, stdout, stderr
 }
@@ -784,9 +784,9 @@ TEST_CASE("wt new refuses a container it can't prove it owns") {
 
     const auto before_work = entries(box.work());
     auto r = run_wt(box, repo, {"new", "feature"});
-    CHECK(r.code == 1);
+    CHECK(r.code == 2);
     CHECK(r.out.empty());
-    CHECK_THAT(r.err, StartsWith("wt: error: " + container.string()));
+    CHECK_THAT(r.err, StartsWith("wt: refused: " + container.string()));
     CHECK(entries(box.work()) == before_work);
     CHECK_FALSE(fs::exists(elsewhere / "c" / "feature"));
     if (fs::is_regular_file(container / "theirs")) {
@@ -816,11 +816,11 @@ TEST_CASE("wt new reports what git leaves behind and removes nothing") {
     fs::permissions(hook, fs::perms::owner_all);
 
     auto r = run_wt(box, repo, {"new", "feature"});
-    CHECK(r.code == 1);
+    CHECK(r.code == 4);
     CHECK(r.out.empty());
     CHECK_THAT(
         r.err,
-        StartsWith("wt: error: git worktree add failed with exit code 3"));
+        StartsWith("wt: git error: git worktree add failed with exit code 3"));
     CHECK_THAT(r.err, ContainsSubstring("  hook broke\n"));
     CHECK_THAT(r.err, ContainsSubstring("  branch feature\n"));
     CHECK_THAT(r.err,
@@ -855,14 +855,15 @@ TEST_CASE("wt new fails when Git succeeds but the worktree isn't the task's") {
     fs::permissions(hook, fs::perms::owner_all);
 
     auto r = run_wt(box, repo, {"new", "feature"});
-    CHECK(r.code == 1);
+    CHECK(r.code == 4);
     // Nothing for `cd "$(wt new feature)"` to follow.
     CHECK(r.out.empty());
-    CHECK(r.err == "wt: error: git worktree add reported success, but " +
+    CHECK(r.err == "wt: git error: git worktree add reported success, but " +
                        target.string() +
                        " has branch other checked out, not feature\n"
-                       "wt: nothing was removed; `wt list` shows what is "
-                       "there\n");
+                       "wt: the result could not be verified and nothing "
+                       "was removed; inspect it with `wt list` before "
+                       "retrying\n");
     // Left as the hook made it, for the user to inspect.
     CHECK(git_output(box, target, {"branch", "--show-current"}) == "other");
 }
@@ -1133,9 +1134,9 @@ TEST_CASE("wt status sanitizes commit subjects") {
 TEST_CASE("wt status outside a repository fails with a clear error") {
     Sandbox box;
     auto r = run_wt(box, box.work(), {"status", "feature"});
-    CHECK(r.code == 1);
+    CHECK(r.code == 4);
     CHECK(r.out.empty());
-    CHECK_THAT(r.err, StartsWith("wt: error: not a git repository"));
+    CHECK_THAT(r.err, StartsWith("wt: git error: not a git repository"));
 }
 
 TEST_CASE("wt status requires a task name") {
@@ -1204,10 +1205,10 @@ TEST_CASE("wt remove refuses a worktree with uncommitted changes") {
     write_file(path / "new.txt", "new\n");
 
     auto r = run_wt(box, repo, {"remove", "feature-x"});
-    CHECK(r.code == 1);
+    CHECK(r.code == 2);
     CHECK(r.out.empty());
     CHECK(r.err ==
-          "wt: error: cannot remove feature-x\n"
+          "wt: refused: cannot remove feature-x\n"
           "\n"
           "  2 modified files\n"
           "  1 untracked file\n"
@@ -1256,9 +1257,9 @@ TEST_CASE("wt remove refuses each kind of uncommitted change") {
     }
 
     auto r = run_wt(box, repo, {"remove", "feature"});
-    CHECK(r.code == 1);
+    CHECK(r.code == 2);
     CHECK(r.out.empty());
-    CHECK(r.err == "wt: error: cannot remove feature\n\n" + expected +
+    CHECK(r.err == "wt: refused: cannot remove feature\n\n" + expected +
                        "\nCommit, stash, or remove these changes first.\n");
     CHECK(registered(box, repo, path));
     CHECK(fs::is_directory(path));
@@ -1276,10 +1277,10 @@ TEST_CASE("wt remove refuses ignored files unless told to delete them") {
     write_file(path / "build" / "obj" / "a.o", "o\n");
 
     auto r = run_wt(box, repo, {"remove", "feature"});
-    CHECK(r.code == 1);
+    CHECK(r.code == 2);
     CHECK(r.out.empty());
     CHECK(r.err ==
-          "wt: error: cannot remove feature\n"
+          "wt: refused: cannot remove feature\n"
           "\n"
           "  2 ignored files\n"
           "    build/\n"
@@ -1293,9 +1294,9 @@ TEST_CASE("wt remove refuses ignored files unless told to delete them") {
     SECTION("changes are reported alongside ignored files") {
         write_file(path / "new.txt", "new\n");
         r = run_wt(box, repo, {"remove", "feature"});
-        CHECK(r.code == 1);
+        CHECK(r.code == 2);
         CHECK(r.err ==
-              "wt: error: cannot remove feature\n"
+              "wt: refused: cannot remove feature\n"
               "\n"
               "  1 untracked file\n"
               "  2 ignored files\n"
@@ -1308,9 +1309,9 @@ TEST_CASE("wt remove refuses ignored files unless told to delete them") {
 
         // --delete-ignored never lets uncommitted changes through.
         r = run_wt(box, repo, {"remove", "--delete-ignored", "feature"});
-        CHECK(r.code == 1);
+        CHECK(r.code == 2);
         CHECK(r.err ==
-              "wt: error: cannot remove feature\n"
+              "wt: refused: cannot remove feature\n"
               "\n"
               "  1 untracked file\n"
               "\n"
@@ -1323,9 +1324,9 @@ TEST_CASE("wt remove refuses ignored files unless told to delete them") {
             write_file(path / ("k" + std::to_string(i) + ".env"), "key\n");
         }
         r = run_wt(box, repo, {"remove", "feature"});
-        CHECK(r.code == 1);
+        CHECK(r.code == 2);
         CHECK(r.err ==
-              "wt: error: cannot remove feature\n"
+              "wt: refused: cannot remove feature\n"
               "\n"
               "  12 ignored files\n"
               "    build/\n"
@@ -1376,7 +1377,7 @@ TEST_CASE("wt checks the task worktree even when GIT_DIR points elsewhere") {
 
     fs::remove(path / "new.txt");
     r = run_wt(box, repo, {"remove", "feature"}, hook_env);
-    CHECK(r.code == 1);
+    CHECK(r.code == 2);
     CHECK_THAT(r.err, ContainsSubstring("1 ignored file\n    secret.env\n"));
     CHECK(read_file(path / "secret.env") == "token\n");
     check_untouched(box, repo, path, "feature");
@@ -1414,10 +1415,10 @@ TEST_CASE("wt remove refuses the main worktree") {
     for (const fs::path& from : {repo, linked}) {
         INFO("running from " << from);
         auto r = run_wt(box, from, {"remove", "main"});
-        CHECK(r.code == 1);
+        CHECK(r.code == 2);
         CHECK(r.out.empty());
         CHECK(r.err ==
-              "wt: error: 'main' is checked out in the main worktree, which "
+              "wt: refused: 'main' is checked out in the main worktree, which "
               "wt never removes\n");
     }
     CHECK(fs::is_regular_file(repo / "README"));
@@ -1437,9 +1438,9 @@ TEST_CASE("wt remove refuses a worktree wt didn't create") {
          {std::pair{"other", other}, std::pair{"nested", nested}}) {
         INFO("task " << task);
         auto r = run_wt(box, repo, {"remove", task});
-        CHECK(r.code == 1);
+        CHECK(r.code == 2);
         CHECK(r.out.empty());
-        CHECK(r.err == "wt: error: the worktree for '" + std::string(task) +
+        CHECK(r.err == "wt: refused: the worktree for '" + std::string(task) +
                            "' at " + path.string() +
                            " wasn't created by wt, so wt won't remove it\n");
         check_untouched(box, repo, path, task);
@@ -1460,10 +1461,10 @@ TEST_CASE("wt remove refuses a container it can't prove it owns") {
     }
 
     auto r = run_wt(box, repo, {"remove", "feature"});
-    CHECK(r.code == 1);
+    CHECK(r.code == 2);
     CHECK(r.out.empty());
     CHECK_THAT(r.err,
-               StartsWith("wt: error: " + path.parent_path().string() +
+               StartsWith("wt: refused: " + path.parent_path().string() +
                           " exists but wt can't confirm it manages it ("));
     check_untouched(box, repo, path, "feature");
 }
@@ -1477,10 +1478,10 @@ TEST_CASE("wt remove refuses the worktree it's run from") {
     for (const fs::path& from : {path, path / "src"}) {
         INFO("running from " << from);
         auto r = run_wt(box, from, {"remove", "feature"});
-        CHECK(r.code == 1);
+        CHECK(r.code == 2);
         CHECK(r.out.empty());
         CHECK(r.err ==
-              "wt: error: you are inside the worktree for 'feature'; run wt "
+              "wt: refused: you are inside the worktree for 'feature'; run wt "
               "remove from somewhere else\n");
         check_untouched(box, repo, path, "feature");
     }
@@ -1500,12 +1501,13 @@ TEST_CASE("wt remove refuses a locked worktree") {
         {"worktree", "lock", "--reason", "on a USB drive", path.string()});
 
     auto r = run_wt(box, repo, {"remove", "feature"});
-    CHECK(r.code == 1);
+    CHECK(r.code == 2);
     CHECK(r.out.empty());
-    CHECK(r.err ==
-          "wt: error: the worktree for 'feature' is locked; if it's no longer "
-          "needed, unlock it with `git worktree unlock " +
-              path.string() + "`\n");
+    CHECK(
+        r.err ==
+        "wt: refused: the worktree for 'feature' is locked; if it's no longer "
+        "needed, unlock it with `git worktree unlock " +
+            path.string() + "`\n");
     check_untouched(box, repo, path, "feature");
 }
 
@@ -1519,11 +1521,12 @@ TEST_CASE("wt remove refuses a worktree in the middle of a merge") {
     REQUIRE(git_output(box, path, {"status", "--porcelain"}).empty());
 
     auto r = run_wt(box, repo, {"remove", "feature"});
-    CHECK(r.code == 1);
+    CHECK(r.code == 2);
     CHECK(r.out.empty());
-    CHECK(r.err ==
-          "wt: error: the worktree for 'feature' is in the middle of a merge; "
-          "finish or abort it first\n");
+    CHECK(
+        r.err ==
+        "wt: refused: the worktree for 'feature' is in the middle of a merge; "
+        "finish or abort it first\n");
     check_untouched(box, repo, path, "feature");
 }
 
@@ -1543,9 +1546,9 @@ TEST_CASE("wt remove refuses a worktree path that isn't a real directory") {
     }
 
     auto r = run_wt(box, repo, {"remove", "feature"});
-    CHECK(r.code == 1);
+    CHECK(r.code == 2);
     CHECK(r.out.empty());
-    CHECK(r.err == "wt: error: " + path.string() +
+    CHECK(r.err == "wt: refused: " + path.string() +
                        " is not a directory, so wt won't remove it\n");
     CHECK(registered(box, repo, path));
     CHECK(read_file(moved / "README") == "hello\n");
@@ -1561,9 +1564,9 @@ TEST_CASE("wt remove refuses a worktree whose status can't be read") {
     fs::remove(path / ".git");
 
     auto r = run_wt(box, repo, {"remove", "broken"});
-    CHECK(r.code == 1);
+    CHECK(r.code == 2);
     CHECK(r.out.empty());
-    CHECK(r.err == "wt: error: cannot read the status of " + path.string() +
+    CHECK(r.err == "wt: refused: cannot read the status of " + path.string() +
                        ": its .git file is missing; not removing it\n");
     CHECK(fs::is_regular_file(path / "README"));
     CHECK(registered(box, repo, path));
@@ -1584,10 +1587,11 @@ TEST_CASE("wt remove reports Git's failure and what is left") {
     auto r = run_wt(box, repo, {"remove", "feature"});
     fs::permissions(path / "locked", fs::perms::owner_write,
                     fs::perm_options::add);
-    CHECK(r.code == 1);
+    CHECK(r.code == 4);
     CHECK(r.out.empty());
-    CHECK_THAT(r.err, StartsWith("wt: error: git worktree remove failed with "
-                                 "exit code "));
+    CHECK_THAT(r.err,
+               StartsWith("wt: git error: git worktree remove failed with "
+                          "exit code "));
     CHECK_THAT(r.err,
                ContainsSubstring("wt: " + path.string() + " is still there\n"));
     CHECK(read_file(path / "locked" / "data") == "data\n");
@@ -1625,9 +1629,9 @@ TEST_CASE("wt remove handles spaces in the repository path") {
 TEST_CASE("wt remove outside a repository fails with a clear error") {
     Sandbox box;
     auto r = run_wt(box, box.work(), {"remove", "feature"});
-    CHECK(r.code == 1);
+    CHECK(r.code == 4);
     CHECK(r.out.empty());
-    CHECK_THAT(r.err, StartsWith("wt: error: not a git repository"));
+    CHECK_THAT(r.err, StartsWith("wt: git error: not a git repository"));
 }
 
 TEST_CASE("wt remove requires a task name") {
@@ -1753,10 +1757,10 @@ TEST_CASE("wt merge aborts a conflicting merge and lists the conflicts") {
     const std::string before = head_of(box, repo);
 
     auto r = run_wt(box, repo, {"merge", "feature-x"});
-    CHECK(r.code == 1);
+    CHECK(r.code == 3);
     CHECK(r.out.empty());
     CHECK(r.err ==
-          "wt: error: merge blocked: feature-x conflicts with main\n"
+          "wt: conflict: feature-x conflicts with main\n"
           "\n"
           "Conflicts:\n"
           "- src/bar.cpp\n"
@@ -1782,10 +1786,11 @@ TEST_CASE("wt merge aborts a merge Git stops without conflicts") {
     const std::string before = head_of(box, repo);
 
     auto r = run_wt(box, repo, {"merge", "feature"});
-    CHECK(r.code == 1);
+    CHECK(r.code == 4);
     CHECK(r.out.empty());
-    CHECK_THAT(r.err,
-               StartsWith("wt: error: git merge failed with exit code 1\n"));
+    CHECK_THAT(
+        r.err,
+        StartsWith("wt: git error: git merge failed with exit code 1\n"));
     CHECK_THAT(r.err, ContainsSubstring("  hook says no\n"));
     CHECK_THAT(r.err,
                ContainsSubstring(
@@ -1805,10 +1810,10 @@ TEST_CASE("wt merge reports a merge Git refuses to start") {
     const std::string before = head_of(box, repo);
 
     auto r = run_wt(box, repo, {"merge", "feature"});
-    CHECK(r.code == 1);
+    CHECK(r.code == 4);
     CHECK(r.out.empty());
     CHECK_THAT(r.err,
-               StartsWith("wt: error: git merge failed with exit code "));
+               StartsWith("wt: git error: git merge failed with exit code "));
     CHECK_THAT(r.err, ContainsSubstring("\nmain is unchanged.\n"));
     check_main_restored(box, repo, before);
 }
@@ -1825,13 +1830,15 @@ TEST_CASE("wt merge fails when Git succeeds but main lacks the task") {
     fs::permissions(hook, fs::perms::owner_all);
 
     auto r = run_wt(box, repo, {"merge", "feature"});
-    CHECK(r.code == 1);
+    CHECK(r.code == 4);
     CHECK(r.out.empty());
-    CHECK_THAT(r.err, StartsWith("wt: error: git merge reported success, but "
-                                 "main doesn't contain feature\n"));
-    CHECK_THAT(r.err, ContainsSubstring("\nInspect main's worktree with `git "
-                                        "-C " +
-                                        repo.string() + " status`.\n"));
+    CHECK_THAT(r.err,
+               StartsWith("wt: git error: git merge reported success, but "
+                          "main doesn't contain feature\n"));
+    CHECK_THAT(r.err, ContainsSubstring(
+                          "\nThe result could not be verified; "
+                          "inspect main's worktree with `git -C " +
+                          repo.string() + " status` before retrying.\n"));
     CHECK(head_of(box, repo) == before);
 }
 
@@ -1845,10 +1852,11 @@ TEST_CASE("wt merge fails when Git succeeds but leaves main's worktree dirty") {
     fs::permissions(hook, fs::perms::owner_all);
 
     auto r = run_wt(box, repo, {"merge", "feature"});
-    CHECK(r.code == 1);
+    CHECK(r.code == 4);
     CHECK(r.out.empty());
-    CHECK_THAT(r.err, StartsWith("wt: error: git merge reported success, but "
-                                 "main's worktree is dirty\n"));
+    CHECK_THAT(r.err,
+               StartsWith("wt: git error: git merge reported success, but "
+                          "main's worktree is dirty\n"));
     // The merge itself happened and is left in place, along with the file.
     CHECK(head_of(box, repo) == head_of(box, path));
     CHECK(read_file(repo / "stray.txt") == "x\n");
@@ -1875,10 +1883,10 @@ TEST_CASE("wt merge explains how to land a task when merge.ff is only") {
     // task's own worktree, as an agent would: the setting is shared by all
     // worktrees.
     r = run_wt(box, second, {"merge", "second"});
-    CHECK(r.code == 1);
+    CHECK(r.code == 2);
     CHECK(r.out.empty());
     CHECK(r.err ==
-          "wt: error: cannot fast-forward main to second\n"
+          "wt: refused: cannot fast-forward main to second\n"
           "\n"
           "second is 1 commit behind main, and merge.ff is set to "
           "\"only\".\n"
@@ -1898,8 +1906,8 @@ TEST_CASE("wt merge explains how to land a task when merge.ff is only") {
         run_in(box, second, {find_on_path("git"), "rebase", "-q", "main"});
     REQUIRE(rebase.code != 0);
     r = run_wt(box, repo, {"merge", "second"});
-    CHECK(r.code == 1);
-    CHECK_THAT(r.err, StartsWith("wt: error: 'second' is being rebased in " +
+    CHECK(r.code == 2);
+    CHECK_THAT(r.err, StartsWith("wt: refused: 'second' is being rebased in " +
                                  second.string() + "; "));
     write_file(second / "a.txt", "first and second\n");
     git(box, second, {"add", "a.txt"});
@@ -1925,9 +1933,9 @@ TEST_CASE("wt merge explains how to land a behind task without a worktree") {
     const std::string before = head_of(box, repo);
 
     auto r = run_wt(box, repo, {"merge", "feature"});
-    CHECK(r.code == 1);
+    CHECK(r.code == 2);
     CHECK(r.err ==
-          "wt: error: cannot fast-forward main to feature\n"
+          "wt: refused: cannot fast-forward main to feature\n"
           "\n"
           "feature is 2 commits behind main, and merge.ff is set to "
           "\"only\".\n"
@@ -1956,9 +1964,9 @@ TEST_CASE("wt merge refuses when main's worktree isn't clean") {
     }
 
     auto r = run_wt(box, repo, {"merge", "feature"});
-    CHECK(r.code == 1);
+    CHECK(r.code == 2);
     CHECK(r.out.empty());
-    CHECK(r.err == "wt: error: main's worktree at " + repo.string() +
+    CHECK(r.err == "wt: refused: main's worktree at " + repo.string() +
                        " has uncommitted changes; commit or stash them "
                        "before merging into main\n");
     CHECK(head_of(box, repo) == before);
@@ -1975,8 +1983,8 @@ TEST_CASE("wt merge refuses when main is in the middle of another merge") {
     const std::string before = head_of(box, repo);
 
     auto r = run_wt(box, repo, {"merge", "feature"});
-    CHECK(r.code == 1);
-    CHECK(r.err == "wt: error: main's worktree at " + repo.string() +
+    CHECK(r.code == 2);
+    CHECK(r.err == "wt: refused: main's worktree at " + repo.string() +
                        " is in the middle of a merge; finish or abort it "
                        "first\n");
     CHECK(head_of(box, repo) == before);
@@ -1991,10 +1999,10 @@ TEST_CASE("wt merge refuses when the task has uncommitted changes") {
     const std::string before = head_of(box, repo);
 
     auto r = run_wt(box, repo, {"merge", "feature"});
-    CHECK(r.code == 1);
+    CHECK(r.code == 2);
     CHECK(r.out.empty());
     CHECK(r.err ==
-          "wt: error: the worktree for 'feature' has uncommitted changes, "
+          "wt: refused: the worktree for 'feature' has uncommitted changes, "
           "which the merge wouldn't include; commit or stash them first "
           "(`wt status feature` shows them)\n");
     CHECK(head_of(box, repo) == before);
@@ -2037,9 +2045,10 @@ TEST_CASE("wt merge refuses a task that is being rebased") {
     }
 
     auto r = run_wt(box, repo, {"merge", "feature"});
-    CHECK(r.code == 1);
+    CHECK(r.code == 2);
     CHECK(r.out.empty());
-    CHECK_THAT(r.err, StartsWith("wt: error: 'feature' is being rebased in "));
+    CHECK_THAT(r.err,
+               StartsWith("wt: refused: 'feature' is being rebased in "));
     CHECK_THAT(r.err, ContainsSubstring("; finish the rebase (`git rebase "
                                         "--continue`) or abort it (`git rebase "
                                         "--abort`), then merge again\n"));
@@ -2065,10 +2074,10 @@ TEST_CASE("wt merge refuses to overwrite ignored files in main's worktree") {
     const std::string before = head_of(box, repo);
 
     auto r = run_wt(box, repo, {"merge", "feature"});
-    CHECK(r.code == 1);
+    CHECK(r.code == 2);
     CHECK(r.out.empty());
     CHECK(r.err ==
-          "wt: error: cannot merge feature into main\n"
+          "wt: refused: cannot merge feature into main\n"
           "\n"
           "Merging would overwrite these ignored files in main's worktree:\n"
           "- .env\n"
@@ -2123,7 +2132,7 @@ TEST_CASE("wt merge rejects the integration branch and unknown branches") {
 TEST_CASE("wt merge outside a repository fails with a clear error") {
     Sandbox box;
     auto r = run_wt(box, box.work(), {"merge", "feature"});
-    CHECK(r.code == 1);
+    CHECK(r.code == 4);
     CHECK(r.out.empty());
-    CHECK_THAT(r.err, StartsWith("wt: error: not a git repository"));
+    CHECK_THAT(r.err, StartsWith("wt: git error: not a git repository"));
 }

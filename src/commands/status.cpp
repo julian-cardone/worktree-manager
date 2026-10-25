@@ -1,7 +1,7 @@
 #include "commands/status.hpp"
 
 #include "commands/task_worktree.hpp"
-#include "git/git.hpp"
+#include "error.hpp"
 #include "git/repo.hpp"
 #include "git/worktree.hpp"
 #include "ui/format.hpp"
@@ -16,11 +16,12 @@ namespace wt {
 namespace {
 
 // The integration branch, or nothing (with a warning) if there isn't one.
-// Not having one only costs the ahead/behind counts, so it isn't fatal.
+// Not having one, or Git failing to name it, only costs the ahead/behind
+// counts, so it isn't fatal.
 std::optional<std::string> try_integration_branch(const Context& ctx) {
     try {
         return git::integration_branch(ctx.cwd);
-    } catch (const git::Error& e) {
+    } catch (const Error& e) {
         ctx.err << "wt: warning: not comparing with an integration branch: "
                 << ui::printable(e.what()) << '\n';
         return std::nullopt;
@@ -73,10 +74,10 @@ int status_command(const Context& ctx, const std::string& task) {
                    "`git worktree prune` makes Git forget it\n";
     }
     if (status.status == git::Status::unknown) {
-        ctx.err << "wt: error: cannot read the status of "
+        ctx.err << error_prefix(ErrorKind::user) << "cannot read the status of "
                 << ui::printable(worktree.path.string()) << ": "
                 << ui::printable(status.detail) << '\n';
-        return 1;
+        return exit_code(ErrorKind::user);
     }
     return 0;
 }

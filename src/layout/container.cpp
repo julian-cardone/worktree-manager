@@ -1,5 +1,7 @@
 #include "layout/container.hpp"
 
+#include "error.hpp"
+
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -61,8 +63,8 @@ fs::path container_path(const fs::path& main_worktree,
     if (name.empty() || name == "." || name == ".." ||
         !main_worktree.has_parent_path() ||
         main_worktree.parent_path() == main_worktree) {
-        throw ContainerError("cannot place worktrees next to " +
-                             main_worktree.string());
+        throw Error(ErrorKind::user,
+                    "cannot place worktrees next to " + main_worktree.string());
     }
     return main_worktree.parent_path() /
            ("." + name + ".wt-" + short_id(common_dir.string()));
@@ -146,15 +148,16 @@ void prepare_container(const fs::path& container, const fs::path& common_dir) {
         // A non-directory in the way reports file_exists; that still gets
         // the ownership explanation below.
         if (ec && ec != std::errc::file_exists) {
-            throw ContainerError("cannot create " + container.string() + ": " +
-                                 ec.message());
+            throw Error(ErrorKind::user, "cannot create " + container.string() +
+                                             ": " + ec.message());
         }
         // Something is already there; use it only if it's provably ours.
         if (auto problem = ownership_problem(container, common_dir)) {
-            throw ContainerError(
-                container.string() +
-                " exists but wt can't confirm it manages it (" + *problem +
-                "); move it aside and try again");
+            // WARNING: never reuse a directory wt can't prove it owns.
+            throw Error(ErrorKind::refused,
+                        container.string() +
+                            " exists but wt can't confirm it manages it (" +
+                            *problem + "); move it aside and try again");
         }
         return;
     }
@@ -180,8 +183,8 @@ void prepare_container(const fs::path& container, const fs::path& common_dir) {
             ::unlink(marker.c_str());
         }
         fs::remove(container, ec);
-        throw ContainerError("cannot create " + marker.string() + ": " +
-                             errno_message(err));
+        throw Error(ErrorKind::user, "cannot create " + marker.string() + ": " +
+                                         errno_message(err));
     }
 }
 
