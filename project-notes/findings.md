@@ -15,6 +15,8 @@ Each explains why a check or rule exists; keep it while that check or rule does,
 
 Without `--force`, Git refuses to remove a worktree with modified or untracked files, but silently deletes ignored ones (`.env` files, local config, build output).
 `wt remove` names the ignored files it would delete and refuses unless `--delete-ignored` is given; `wt merge --cleanup` makes the same check before merging.
+An ignored file created by another process between that check and `git worktree remove` is still deleted.
+Git offers no lock covering both steps, so this is an accepted residual race: `wt` keeps the window short, never passes `--force`, and deliberately adds no locking or filesystem machinery of its own.
 
 ### `git worktree remove` follows a symlink at the worktree path
 
