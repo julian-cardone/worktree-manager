@@ -5,6 +5,7 @@
 #include "ui/format.hpp"
 
 #include <charconv>
+#include <sstream>
 #include <system_error>
 
 namespace wt::git {
@@ -121,6 +122,37 @@ std::optional<std::string> conflicting_branch(const fs::path& dir,
         return std::nullopt;
     }
     return nested;
+}
+
+std::vector<std::string> local_branches(const fs::path& dir) {
+    // The full refname, because %(refname:short) can add a "heads/" prefix
+    // when a tag has the same name.
+    const Result r =
+        run(dir, {"for-each-ref", "--format=%(refname)", "refs/heads/"});
+    if (r.exit_code != 0) {
+        throw Error(error_message(r.err));
+    }
+    constexpr std::string_view kPrefix = "refs/heads/";
+    std::vector<std::string> branches;
+    std::istringstream lines(r.out);
+    for (std::string line; std::getline(lines, line);) {
+        if (line.starts_with(kPrefix)) {
+            branches.push_back(line.substr(kPrefix.size()));
+        }
+    }
+    return branches;
+}
+
+bool ignores_case(const fs::path& dir) {
+    const Result r =
+        run(dir, {"config", "--type=bool", "--get", "core.ignorecase"});
+    if (r.exit_code == kNotFound) {
+        return false;
+    }
+    if (r.exit_code != 0) {
+        throw Error(error_message(r.err));
+    }
+    return first_line(r.out) == "true";
 }
 
 std::optional<std::string> resolve_commit(const fs::path& dir,

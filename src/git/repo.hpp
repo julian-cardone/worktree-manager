@@ -5,6 +5,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace wt::git {
 
@@ -30,6 +31,13 @@ bool ref_exists(const std::filesystem::path& dir, std::string_view ref);
 // name is a directory of the other (e.g. "a" and "a/b"), or nothing.
 std::optional<std::string> conflicting_branch(const std::filesystem::path& dir,
                                               std::string_view branch);
+
+// Every local branch, by its name without "refs/heads/".
+std::vector<std::string> local_branches(const std::filesystem::path& dir);
+
+// Reports whether Git treats file names in the repository as case-insensitive
+// (core.ignorecase, which Git sets by probing when it creates the repository).
+bool ignores_case(const std::filesystem::path& dir);
 
 // The commit `name` (e.g. "HEAD", "MERGE_HEAD") resolves to in the worktree at
 // `dir`, or nothing if it doesn't exist there.

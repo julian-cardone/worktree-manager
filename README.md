@@ -159,6 +159,7 @@ They can't start with `-` or `.`, start or end with `/`, or contain `//` or `..`
 
 - the branch already exists locally, even if it's a task's (`wt new` never reuses a branch);
 - another branch makes the name impossible for Git, e.g. `payments` exists and the task is `payments/api`, or the reverse;
+- a local branch differs from it only in case, when Git reports a case-insensitive filesystem (`core.ignorecase`), however that branch is stored;
 - anything exists at the target path, including an empty directory, a file, or a dangling symlink (e.g. `a/b` and `a-b` would share a folder);
 - Git still has a worktree registered at the target path, even one whose directory was deleted (`git worktree prune` clears those);
 - the container exists but isn't verifiably owned by this repository.

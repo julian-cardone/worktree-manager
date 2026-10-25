@@ -8,11 +8,14 @@
 #include "layout/task.hpp"
 #include "ui/format.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <optional>
 #include <ostream>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <vector>
 
@@ -36,13 +39,75 @@ bool path_exists(const fs::path& path) {
     return true;
 }
 
-// Fails if `branch` exists or Git couldn't create it next to an existing one.
+// Task names are ASCII, so ASCII case folding is enough.
+bool same_ignoring_case(std::string_view a, std::string_view b) {
+    return std::ranges::equal(a, b, [](char x, char y) {
+        return std::tolower(static_cast<unsigned char>(x)) ==
+               std::tolower(static_cast<unsigned char>(y));
+    });
+}
+
+// A local branch whose name differs from `branch` only in case, or nothing if
+// there's none or `branch` itself exists.
+std::optional<std::string> case_variant_branch(const Context& ctx,
+                                               const std::string& branch) {
+    std::optional<std::string> variant;
+    for (auto& existing : git::local_branches(ctx.repo)) {
+        if (existing == branch) {
+            return std::nullopt;
+        }
+        if (!variant && same_ignoring_case(existing, branch)) {
+            variant = std::move(existing);
+        }
+    }
+    return variant;
+}
+
+// The existing entry the filesystem matched for `target`, with its own
+// casing: on a case-insensitive filesystem, "Fix" finds a folder named "fix".
+// Returns `target` itself if there's no differently cased entry to name.
+fs::path existing_entry(const fs::path& target) {
+    const std::string name = target.filename().string();
+    std::optional<fs::path> variant;
+    std::error_code ec;
+    for (fs::directory_iterator it(target.parent_path(), ec), end;
+         !ec && it != end; it.increment(ec)) {
+        const std::string entry = it->path().filename().string();
+        if (entry == name) {
+            return target;
+        }
+        if (!variant && same_ignoring_case(entry, name)) {
+            variant = it->path();
+        }
+    }
+    return ec ? target : variant.value_or(target);
+}
+
+// Fails if `branch` exists, differs only in case from an existing branch
+// where Git treats case as insignificant, or Git couldn't create it next to an
+// existing one.
 // WARNING: wt new never attaches the task to a branch that already exists; its
 // commits may belong to unrelated work.
 void check_branch_free(const Context& ctx,
                        const std::vector<git::Worktree>& worktrees,
                        const std::string& branch) {
-    if (git::ref_exists(ctx.repo, "refs/heads/" + branch)) {
+    const bool exists = git::ref_exists(ctx.repo, "refs/heads/" + branch);
+    // On a case-insensitive filesystem, loose refs differing only in case are
+    // the same file, so Git finds "Fix" when only "fix" exists. A packed "fix"
+    // isn't found that way, but creating "Fix" next to it would let either
+    // ref's next loose write shadow the other.
+    // WARNING: refuse case variants however they're stored, so two branches
+    // can never share a ref file.
+    if (exists || git::ignores_case(ctx.repo)) {
+        if (auto existing = case_variant_branch(ctx, branch)) {
+            throw Error(ErrorKind::user,
+                        "task '" + branch +
+                            "' conflicts with existing branch '" + *existing +
+                            "' (names differ only in case); choose another "
+                            "task name");
+        }
+    }
+    if (exists) {
         std::string where;
         for (const auto& worktree : worktrees) {
             if (worktree.branch == branch) {
@@ -70,8 +135,12 @@ void check_branch_free(const Context& ctx,
 // WARNING: never reuse or overwrite what is there; it isn't wt's. A refusal,
 // not a user error: the task itself may be fine.
 void check_target_free(const std::vector<git::Worktree>& worktrees,
-                       const fs::path& target) {
-    const bool exists = path_exists(target);
+                       const fs::path& requested) {
+    const bool exists = path_exists(requested);
+    // Errors name what is actually there, which may differ in case.
+    const fs::path target = exists ? existing_entry(requested) : requested;
+    const std::string note =
+        target == requested ? "" : " (folder names differ only in case)";
     for (const auto& worktree : worktrees) {
         if (worktree.path != target) {
             continue;
@@ -80,7 +149,8 @@ void check_target_free(const std::vector<git::Worktree>& worktrees,
             throw Error(ErrorKind::refused,
                         target.string() + " is already the worktree for " +
                             (worktree.branch ? "branch " + *worktree.branch
-                                             : std::string("a detached HEAD")));
+                                             : std::string("a detached HEAD")) +
+                            note);
         }
         throw Error(
             ErrorKind::refused,
@@ -91,7 +161,8 @@ void check_target_free(const std::vector<git::Worktree>& worktrees,
     if (exists) {
         throw Error(ErrorKind::refused,
                     "cannot create the worktree: " + target.string() +
-                        " already exists; wt never reuses or overwrites it, "
+                        " already exists" + note +
+                        "; wt never reuses or overwrites it, "
                         "so move it away or choose another task name");
     }
 }

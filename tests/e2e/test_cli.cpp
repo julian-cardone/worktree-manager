@@ -809,6 +809,100 @@ TEST_CASE("wt new refuses two tasks that share a folder") {
                        " is already the worktree for branch a/b\n");
 }
 
+// Whether `dir` is on a case-insensitive filesystem, like macOS's default.
+bool case_insensitive(const fs::path& dir) {
+    const fs::path probe = dir / "case-probe";
+    write_file(probe, "");
+    const bool result = fs::exists(dir / "CASE-PROBE");
+    fs::remove(probe);
+    return result;
+}
+
+TEST_CASE("wt new names the branch a task differs from only in case") {
+    Sandbox box;
+    if (!case_insensitive(box.work())) {
+        SKIP("needs a case-insensitive filesystem");
+    }
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    wt_new(box, repo, "fix");
+
+    auto r = run_wt(box, repo, {"new", "Fix"});
+    CHECK(r.code == 1);
+    CHECK(r.out.empty());
+    CHECK(r.err ==
+          "wt: error: task 'Fix' conflicts with existing branch 'fix' (names "
+          "differ only in case); choose another task name\n");
+    CHECK(git_output(box, repo, {"branch", "--format=%(refname:short)"}) ==
+          "fix\nmain");
+}
+
+TEST_CASE("wt new refuses a packed branch that differs only in case") {
+    Sandbox box;
+    if (!case_insensitive(box.work())) {
+        SKIP("needs a case-insensitive filesystem");
+    }
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path container = wt_new(box, repo, "fix").parent_path();
+    REQUIRE(run_wt(box, repo, {"remove", "fix"}).code == 0);
+    git(box, repo, {"pack-refs", "--all"});
+
+    auto r = run_wt(box, repo, {"new", "Fix"});
+    CHECK(r.code == 1);
+    CHECK(r.out.empty());
+    CHECK(r.err ==
+          "wt: error: task 'Fix' conflicts with existing branch 'fix' (names "
+          "differ only in case); choose another task name\n");
+    CHECK(
+        git_output(box, repo, {"show-ref", "--heads"}).find("refs/heads/Fix") ==
+        std::string::npos);
+    CHECK(git_output(box, repo, {"branch", "--format=%(refname:short)"}) ==
+          "fix\nmain");
+    CHECK_FALSE(fs::exists(container / "fix"));
+}
+
+TEST_CASE("wt new allows case variants when Git says case matters") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    git(box, repo, {"branch", "fix"});
+    // Packed, so a case-insensitive filesystem can hold both refs too.
+    git(box, repo, {"pack-refs", "--all"});
+    git(box, repo, {"config", "core.ignorecase", "false"});
+
+    wt_new(box, repo, "Fix");
+    CHECK(git_output(box, repo, {"branch", "--format=%(refname:short)"}) ==
+          "Fix\nfix\nmain");
+}
+
+TEST_CASE("wt new names the folder a task differs from only in case") {
+    Sandbox box;
+    if (!case_insensitive(box.work())) {
+        SKIP("needs a case-insensitive filesystem");
+    }
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path first = wt_new(box, repo, "a/fix");
+
+    SECTION("another task's worktree") {
+        auto r = run_wt(box, repo, {"new", "a-Fix"});
+        CHECK(r.code == 2);
+        CHECK(r.err == "wt: refused: " + first.string() +
+                           " is already the worktree for branch a/fix (folder "
+                           "names differ only in case)\n");
+    }
+    SECTION("an unrelated directory") {
+        const fs::path existing = first.parent_path() / "feature";
+        fs::create_directory(existing);
+        auto r = run_wt(box, repo, {"new", "Feature"});
+        CHECK(r.code == 2);
+        CHECK(r.err ==
+              "wt: refused: cannot create the worktree: " + existing.string() +
+                  " already exists (folder names differ only in "
+                  "case); wt never reuses or overwrites it, so move "
+                  "it away or choose another task name\n");
+    }
+    CHECK(git_output(box, repo, {"branch", "--format=%(refname:short)"}) ==
+          "a/fix\nmain");
+}
+
 TEST_CASE("wt new refuses a path Git still has registered") {
     Sandbox box;
     const fs::path repo = make_repo(box, box.work() / "repo");
