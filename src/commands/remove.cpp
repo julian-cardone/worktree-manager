@@ -174,7 +174,9 @@ RemovalCheck check_removable(const Context& ctx,
                              const git::Worktree& worktree,
                              const std::string& task, bool delete_ignored,
                              std::string_view command) {
-    // Git lists the main worktree first; it is the repository itself.
+    // WARNING: wt must never remove the main worktree, whatever branch it has
+    // checked out; it is the user's repository itself, not a task. Git lists
+    // it first, so its position, not a branch name, identifies it.
     if (&worktree == &worktrees.front()) {
         throw Error(ErrorKind::refused,
                     "'" + task +

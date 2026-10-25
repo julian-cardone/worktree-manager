@@ -1842,16 +1842,24 @@ TEST_CASE("wt remove refuses the main worktree") {
     const fs::path repo = make_repo(box, box.work() / "repo");
     const fs::path linked = wt_new(box, repo, "feature");
 
+    // The refusal must follow the worktree, not the name "main".
+    std::string branch;
+    SECTION("on main") { branch = "main"; }
+    SECTION("on another branch") {
+        branch = "foo";
+        git(box, repo, {"switch", "-q", "-c", "foo"});
+    }
+
     for (const fs::path& from : {repo, linked}) {
         INFO("running from " << from);
-        auto r = run_wt(box, from, {"remove", "main"});
+        auto r = run_wt(box, from, {"remove", branch});
         CHECK(r.code == 2);
         CHECK(r.out.empty());
-        CHECK(r.err ==
-              "wt: refused: 'main' is checked out in the main worktree, which "
-              "wt never removes\n");
+        CHECK(r.err == "wt: refused: '" + branch +
+                           "' is checked out in the main worktree, which wt "
+                           "never removes\n");
     }
-    CHECK(fs::is_regular_file(repo / "README"));
+    check_untouched(box, repo, repo, branch);
 }
 
 TEST_CASE("wt remove refuses a worktree wt didn't create") {
@@ -2724,6 +2732,31 @@ TEST_CASE("wt merge --cleanup deletes a branch landed with a merge commit") {
           "Merge branch 'feature' into main");
     CHECK_FALSE(fs::exists(path));
     CHECK_FALSE(branch_exists(box, repo, "feature"));
+}
+
+TEST_CASE(
+    "wt merge --cleanup refuses before merging a task checked out in the "
+    "main worktree") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    git(box, repo, {"switch", "-q", "-c", "foo"});
+    commit_file(box, repo, "a.txt", "a\n");
+    const std::string foo = head_of(box, repo);
+    // main has to be checked out somewhere for wt merge to land into it.
+    const fs::path integration = box.work() / "integration";
+    git(box, repo, {"worktree", "add", "-q", integration.string(), "main"});
+    const std::string before = head_of(box, integration);
+
+    auto r = run_wt(box, integration, {"merge", "foo", "--cleanup"});
+    CHECK(r.code == 2);
+    CHECK(r.out.empty());
+    CHECK(r.err ==
+          "wt: refused: 'foo' is checked out in the main worktree, which wt "
+          "never removes\n");
+    check_main_restored(box, integration, before);
+    check_untouched(box, repo, repo, "foo");
+    CHECK(head_of(box, repo) == foo);
+    CHECK(fs::is_regular_file(repo / "a.txt"));
 }
 
 TEST_CASE(
