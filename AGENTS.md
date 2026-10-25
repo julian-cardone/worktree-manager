@@ -34,13 +34,31 @@ Implement straightforward, clearly beneficial improvements where appropriate. Su
 
 ## 3. Safety & Error Handling
 
+### Safety invariants
+
+These must always hold.
+Review every command, new or changed, against each of them.
+
+| Invariant | Meaning |
+| --- | --- |
+| Never silently discard working changes | Modified, staged, untracked, ignored, or conflicted files must survive unless the user explicitly chose to delete them. |
+| Never force by default | No `--force`, hard resets, branch deletion, or similar in normal operation. |
+| Git is the source of truth | Don't keep a second state database that can disagree with Git. |
+| Validate immediately before mutation | Don't rely on state checked much earlier; re-read what the mutation depends on. |
+| Failed operations leave understandable state | Especially `new`, `merge`, and `remove`: say exactly what changed and what was left behind. |
+| The branch survives worktree cleanup | `wt remove` never deletes the branch. |
+| Conflict resolution stays manual | `wt` never guesses how a conflict should be resolved. |
+| Unknown state means stop | Never treat uncertainty as safety. |
+| User input never becomes shell syntax | Pass arguments as an argv, never through a shell; quote anything printed for the user to paste. |
+| Errors explain recovery | "Failed" alone isn't enough; say what to do next. |
+
+### Practices
+
 - Treat prevention of accidental data loss as a primary priority, especially around worktrees, branches, files, and uncommitted changes.
-- Never silently discard user work.
 - Validate and sanitize paths, branch names, command arguments, and other external inputs.
-- Handle errors explicitly with clear and actionable messages.
-- Consider edge cases, partial failures, and interrupted operations.
+- Consider edge cases, partial failures, interrupted operations, and concurrent processes (e.g. an agent committing while `wt` runs).
 - Use retries only when appropriate; do not mask persistent failures.
-- Be especially careful around file deletion, worktree removal, branch deletion, destructive Git commands, and other irreversible operations.
+- Add a `WARNING:` comment at any check that upholds an invariant, so it isn't relaxed by accident.
 - Never bypass a `wt` safety check.
 
 ## 4. Dogfooding `wt`
