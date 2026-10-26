@@ -91,6 +91,12 @@ void check_destination(const git::Worktree& dest, const std::string& base) {
             throw Error(ErrorKind::refused, "cannot read the status of " +
                                                 where + ": " + status.detail);
     }
+    // The worktree was found from a listing taken earlier; merging there if
+    // someone has since switched it would land the task on another branch.
+    if (git::head_branch(dest.path) != "refs/heads/" + base) {
+        throw Error(ErrorKind::refused, where + " no longer has " + base +
+                                            " checked out; nothing was merged");
+    }
     if (auto operation = git::operation_in_progress(dest.path)) {
         throw Error(ErrorKind::refused, where + " is in the middle of " +
                                             *operation +
@@ -481,9 +487,9 @@ int clean_up(const Context& ctx, const std::string& task,
 // Returns 0 once `base` is verified to contain the task.
 int land(const Context& ctx, const std::string& task, const std::string& base,
          const git::Worktree& dest, const git::Worktree* source) {
-    // WARNING: checked here, after the slower checks on the task, so the
-    // merge starts from the state this saw; aborting a failed merge relies
-    // on it.
+    // WARNING: checked here, after the slower checks on the task, so as
+    // little as possible can change before the merge; aborting a failed
+    // merge relies on what this checks.
     check_destination(dest, base);
     const std::string shown_task = ui::printable(task);
     const std::string shown_base = ui::printable(base);
