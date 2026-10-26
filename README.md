@@ -284,7 +284,7 @@ The clean-worktree check is what makes the abort safe: `git merge --abort` can o
 If Git stops mid-merge for another reason, such as a hook rejecting the merge commit, `wt merge` aborts the same way and shows Git's output.
 If Git refuses to start the merge (for example, because of a branch's `mergeOptions`), it shows Git's output and nothing is changed.
 If the abort fails, or `wt merge` can't confirm the worktree is back where it was, it lists the conflicting files and warns that the merge may still be in progress; don't run other `wt` commands until you have inspected that worktree with the `git status` command it prints.
-After Git reports success, `wt merge` checks that the integration branch contains the task, and that its worktree is on it, clean, and not mid-operation, since a `post-merge` hook runs after the merge and could undo or add to it.
+After Git reports success, `wt merge` checks that the integration branch contains both the task and the commit it was at before the merge, and that its worktree is on it, clean, and not mid-operation, since a `post-merge` hook runs after the merge and could undo it, add to it, or drop the branch's own commits.
 If not, it says what is wrong and where to look, and leaves the merge in place.
 Refusals exit 2, conflicts 3, and Git failures 4, including a merge Git reported but the check after it didn't find (see [Errors and exit codes](#errors-and-exit-codes)).
 
