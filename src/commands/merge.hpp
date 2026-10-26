@@ -12,7 +12,8 @@ namespace wt {
 // an operation. On a conflict, aborts the merge, checks the worktree is
 // back where it was, and lists the conflicting files. Refuses a task that is
 // being rebased, and explains how to rebase a task that is behind when Git is
-// set to fast-forward only. Never resolves conflicts.
+// set to fast-forward only. Never resolves conflicts, so it refuses while the
+// integration branch has merge options configured, which Git could use to.
 //
 // Only with `cleanup` does it then remove the task's worktree, with the
 // checks `wt remove` makes (`delete_ignored` as there), and delete its

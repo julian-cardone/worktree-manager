@@ -4,17 +4,21 @@
 
 Known gaps that still need action.
 
-### `branch.<integration>.mergeOptions` lets `wt merge` resolve conflicts
-
-Git applies `branch.<name>.mergeOptions` to every `git merge` run on that branch.
-With it set to `-Xours` on the integration branch, a conflicting task merged with "✓ Merged" and the task's change was silently dropped; the task is still an ancestor, so the post-merge check passed and `--cleanup` would delete its branch.
-`wt merge` must refuse while that setting is active rather than override it, since `wt` can't guarantee conflicts stay manual under it.
-Custom merge drivers in `.gitattributes` are repository policy and out of scope.
+None right now.
 
 ## Addressed
 
 Findings `wt` now handles.
 Each explains why a check or rule exists; keep it while that check or rule does, and revisit it before relaxing one.
+
+### Merge configuration let `wt merge` resolve conflicts
+
+Git applies `branch.<name>.mergeOptions` to every `git merge` run on that branch, and uses `pull.twohead` as the default strategy of every `git merge`, not only `git pull`.
+With `-Xours` in the integration branch's `mergeOptions`, or `pull.twohead=ours`, a conflicting task merged with "✓ Merged" and the task's change was silently dropped; the task is still an ancestor, so the post-merge check passed and `--cleanup` would delete its branch.
+`wt merge` now refuses whenever either setting has any value and there is something to merge.
+It deliberately doesn't override them with `-c` or `-s`, which would silently ignore the repository's configuration, and doesn't sort values into safe and unsafe, which could get one wrong.
+`rerere.autoupdate` reapplies a recorded resolution but still stops the merge, so `wt` aborts it as usual.
+Custom merge drivers in `.gitattributes` are repository policy and out of scope.
 
 ### `wt status` and `wt list` misdescribed worktrees mid-operation
 

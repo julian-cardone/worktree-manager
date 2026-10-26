@@ -318,8 +318,8 @@ TEST_CASE("wt merge reports a merge Git refuses to start") {
     const fs::path path = wt_new(box, repo, "feature");
     commit_file(box, path, "a.txt", "a\n");
     commit_file(box, repo, "b.txt", "b\n");
-    // wt doesn't read branch-specific merge options, so Git refuses for it.
-    git(box, repo, {"config", "branch.main.mergeOptions", "--ff-only"});
+    // Git refuses the task's unsigned commit before merging anything.
+    git(box, repo, {"config", "merge.verifySignatures", "true"});
     const std::string before = head_of(box, repo);
 
     auto r = run_wt(box, repo, {"merge", "feature"});
@@ -867,6 +867,103 @@ TEST_CASE("wt merge refuses to overwrite ignored files in main's worktree") {
     r = run_wt(box, repo, {"merge", "feature"});
     CHECK(r.code == 0);
     CHECK(read_file(repo / "build" / "other") == "mine\n");
+}
+
+TEST_CASE("wt merge refuses while main has merge options configured") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature");
+    commit_file(box, path, "README", "task\n");
+    commit_file(box, repo, "README", "main\n");
+    const std::string before = head_of(box, repo);
+    std::string values;
+
+    SECTION("one that resolves conflicts") {
+        // Without wt's check, Git settles the conflict in main's favor and
+        // the task's change is dropped.
+        git(box, repo, {"config", "branch.main.mergeOptions", "-Xours"});
+        values = "'-Xours'";
+    }
+    SECTION("any value, and every one of several") {
+        git(box, repo, {"config", "branch.main.mergeOptions", "--no-ff"});
+        git(box, repo,
+            {"config", "--add", "branch.main.mergeOptions", "--log"});
+        values = "'--no-ff', '--log'";
+    }
+
+    auto r = run_wt(box, repo, {"merge", "feature"});
+    CHECK(r.code == 2);
+    CHECK(r.out.empty());
+    CHECK(r.err ==
+          "wt: refused: branch.main.mergeOptions is set to " + values +
+              ", which Git applies to every merge into main and can resolve "
+              "conflicts without stopping, so wt can't guarantee they are "
+              "left to you; to merge with wt, unset it with `git config "
+              "--unset-all branch.main.mergeOptions`\n"
+              "Nothing was merged.\n");
+    check_main_restored(box, repo, before);
+    CHECK(read_file(repo / "README") == "main\n");
+
+    // Unset, the conflict is left to the user as usual.
+    git(box, repo, {"config", "--unset-all", "branch.main.mergeOptions"});
+    r = run_wt(box, repo, {"merge", "feature"});
+    CHECK(r.code == 3);
+    check_main_restored(box, repo, before);
+}
+
+TEST_CASE("wt merge's merge options check ignores other branches") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature");
+    commit_file(box, path, "a.txt", "a\n");
+    git(box, repo, {"config", "branch.feature.mergeOptions", "-Xours"});
+
+    auto r = run_wt(box, repo, {"merge", "feature"});
+    CHECK(r.code == 0);
+    CHECK(head_of(box, repo) == head_of(box, path));
+}
+
+TEST_CASE("wt merge --cleanup finishes a landed task despite merge options") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature");
+    commit_file(box, path, "a.txt", "a\n");
+    REQUIRE(run_wt(box, repo, {"merge", "feature"}).code == 0);
+    // Nothing is merged, so there is nothing for the options to resolve.
+    git(box, repo, {"config", "branch.main.mergeOptions", "-Xours"});
+
+    auto r = run_wt(box, repo, {"merge", "feature", "--cleanup"});
+    CHECK(r.code == 0);
+    CHECK_THAT(r.out, StartsWith("main already contains feature; nothing to "
+                                 "merge\n"));
+    CHECK_FALSE(fs::exists(path));
+}
+
+TEST_CASE("wt merge leaves a conflict rerere resolved to the user") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    git(box, repo, {"config", "rerere.enabled", "true"});
+    git(box, repo, {"config", "rerere.autoupdate", "true"});
+    const fs::path path = wt_new(box, repo, "feature");
+    commit_file(box, path, "README", "task\n");
+    commit_file(box, repo, "README", "main\n");
+    const std::string before = head_of(box, repo);
+    // Record a resolution for this conflict, then drop the merge.
+    REQUIRE(run_in(box, repo, {find_on_path("git"), "merge", "-q", "feature"})
+                .code != 0);
+    write_file(repo / "README", "resolved\n");
+    git(box, repo, {"add", "README"});
+    git(box, repo, {"commit", "-q", "--no-edit"});
+    git(box, repo, {"reset", "-q", "--hard", before});
+
+    // Git reapplies the resolution and stages it, but still stops the merge.
+    auto r = run_wt(box, repo, {"merge", "feature"});
+    CHECK(r.code != 0);
+    CHECK(r.out.empty());
+    CHECK_THAT(r.err,
+               EndsWith("main was restored; no merge remains in progress.\n"));
+    check_main_restored(box, repo, before);
+    CHECK(read_file(repo / "README") == "main\n");
 }
 
 TEST_CASE("wt merge needs main checked out somewhere") {

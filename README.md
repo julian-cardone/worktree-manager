@@ -264,6 +264,7 @@ If the integration branch already has every commit on `<task>`, it says so and d
 - `<task>` or the integration branch is in the middle of a rebase in any worktree, or a `git rebase --update-refs` there will move `<task>`, since its branch still points at the commits being rewritten;
 - `merge.ff` is set to `only` and `<task>` is behind the integration branch (see below);
 - the merge would overwrite ignored files in the integration branch's worktree, i.e. the task's branch adds a file where one is ignored (such as `.env`), which Git would otherwise replace silently;
+- there is something to merge and `branch.<integration-branch>.mergeOptions` is set to anything, since Git adds those options to every merge into that branch and some (such as `-Xours`) resolve conflicts without stopping; `wt` doesn't override the setting, so unset it (`git config --unset-all branch.main.mergeOptions`) to merge with `wt`;
 - the integration branch isn't checked out in any worktree, or `<task>` is the integration branch.
 
 **On a conflict**, `wt merge` aborts the merge with `git merge --abort`, checks that the integration branch's worktree is back exactly where it was, and lists the conflicting files:
@@ -304,7 +305,9 @@ While that rebase is in progress, `wt merge` refuses the task until it is finish
 
 The clean-worktree check is what makes the abort safe: `git merge --abort` can only restore a worktree that had no uncommitted changes before the merge.
 If Git stops mid-merge for another reason, such as a hook rejecting the merge commit, `wt merge` aborts the same way and shows Git's output.
-If Git refuses to start the merge (for example, because of a branch's `mergeOptions`), it shows Git's output and nothing is changed.
+If Git refuses to start the merge (for example, because `merge.verifySignatures` rejects the task's commits), it shows Git's output and nothing is changed.
+With `rerere.autoupdate`, Git reapplies a recorded resolution but still stops the merge, so `wt merge` aborts it like any other.
+Custom merge drivers set in `.gitattributes` are the repository's own policy, and `wt` leaves them to Git.
 If the abort fails, or `wt merge` can't confirm the worktree is back where it was, it lists the conflicting files and warns that the merge may still be in progress; don't run other `wt` commands until you have inspected that worktree with the `git status` command it prints.
 After Git reports success, `wt merge` checks that the integration branch contains both the task and the commit it was at before the merge, and that its worktree is on it, clean, and not mid-operation, since a `post-merge` hook runs after the merge and could undo it, add to it, or drop the branch's own commits.
 If not, it says what is wrong and where to look, and leaves the merge in place.

@@ -40,6 +40,37 @@ bool fast_forward_only(const fs::path& dir) {
     return git::single_value(r.out) == "only";
 }
 
+// Fails if `branch.<base>.mergeOptions` is set. Git adds those options to
+// every merge into `base`, and some (e.g. -Xours, -s ours) settle conflicts
+// without stopping; the task is still an ancestor afterwards, so nothing
+// after the merge could tell.
+// WARNING: refuse rather than override: clearing the setting with `-c` would
+// silently ignore the repository's configuration. Any value refuses; telling
+// safe options from unsafe ones isn't worth the risk of getting one wrong.
+void check_merge_options(const git::Worktree& dest, const std::string& base) {
+    const std::string key = "branch." + base + ".mergeOptions";
+    const git::Result r =
+        git::run(dest.path, {"config", "-z", "--get-all", key});
+    if (r.exit_code == kNotFound) {
+        return;
+    }
+    if (r.exit_code != 0) {
+        throw git::Error(git::error_message(r.err));
+    }
+    std::string values;
+    std::istringstream in(r.out);
+    for (std::string value; std::getline(in, value, '\0');) {
+        values += (values.empty() ? "" : ", ") + ("'" + value + "'");
+    }
+    throw Error(ErrorKind::refused,
+                key + " is set to " + values + ", which Git applies to " +
+                    "every merge into " + base +
+                    " and can resolve conflicts without stopping, so wt "
+                    "can't guarantee they are left to you; to merge with wt, "
+                    "unset it with `git config --unset-all " +
+                    ui::shell_quote(key) + "`");
+}
+
 // Explains, on stderr, that `task` must be rebased before it can land.
 void report_behind(const Context& ctx, const std::string& task,
                    const std::string& base, std::size_t behind,
@@ -534,6 +565,7 @@ int land(const Context& ctx, const std::string& task, const std::string& base,
                 << "; nothing to merge\n";
         return 0;
     }
+    check_merge_options(dest, base);
     // Git would refuse too, but without saying how to get the task landed.
     if (divergence.behind != 0 && fast_forward_only(dest.path)) {
         report_behind(ctx, task, base, divergence.behind, source);
