@@ -35,3 +35,11 @@ target_compile_definitions(wt_e2e_tests PRIVATE
 target_include_directories(wt_e2e_tests PRIVATE .)
 add_dependencies(wt_e2e_tests wt)
 catch_discover_tests(wt_e2e_tests TEST_PREFIX "e2e: ")
+
+# Install tests: install the built binary into a throwaway prefix and uninstall it.
+add_test(NAME "install: install and uninstall"
+  COMMAND ${CMAKE_COMMAND}
+    -DWT_BUILD_DIR=${PROJECT_BINARY_DIR}
+    -DWT_UNINSTALL_SCRIPT=${PROJECT_SOURCE_DIR}/cmake/uninstall.cmake
+    -DWT_TEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/install-test
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/install/test_install.cmake)

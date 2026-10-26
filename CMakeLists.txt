@@ -65,6 +65,25 @@ target_link_libraries(wt PRIVATE wt_core wt_warnings)
 set_target_properties(wt PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
 # ---------------------------------------------------------------------------
+# Install / uninstall
+#   cmake --install build --prefix ~/.local   -> ~/.local/bin/wt
+#   cmake --build build --target uninstall    -> removes what that installed
+# ---------------------------------------------------------------------------
+include(GNUInstallDirs)
+install(TARGETS wt RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(CODE "set(WT_INSTALL_BINDIR [[${CMAKE_INSTALL_BINDIR}]])")
+install(SCRIPT cmake/install_path_hint.cmake)
+
+if(PROJECT_IS_TOP_LEVEL)
+  add_custom_target(uninstall
+    COMMAND ${CMAKE_COMMAND}
+      -DWT_INSTALL_MANIFEST=${CMAKE_BINARY_DIR}/install_manifest.txt
+      -P ${PROJECT_SOURCE_DIR}/cmake/uninstall.cmake
+    COMMENT "Removing the files listed in install_manifest.txt"
+    VERBATIM)
+endif()
+
+# ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
 if(WT_BUILD_TESTS)

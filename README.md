@@ -28,6 +28,40 @@ cmake --build build -j       # build; produces ./build/wt
 
 Pass `-DWT_BUILD_TESTS=OFF` at configure time to skip building the tests (and fetching Catch2).
 
+## Installing
+
+Install `wt` into `~/.local/bin`, which needs no administrator rights:
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+cmake --install build --prefix "$HOME/.local"
+```
+
+The only file installed is `<prefix>/bin/wt`.
+Any prefix works; without `--prefix`, CMake uses `/usr/local`, which usually needs `sudo`.
+Quote a prefix that contains spaces.
+
+If the install directory isn't on your `PATH`, the install says so.
+Add it in your shell profile (for example `~/.zshrc` or `~/.bashrc`), then open a new shell:
+
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+To update, pull, then rerun the build and install commands; the new binary replaces the old one.
+
+### Uninstalling
+
+```sh
+cmake --build build --target uninstall
+```
+
+This removes exactly the files listed in `build/install_manifest.txt`, which `cmake --install` writes each time it runs, and then removes that manifest.
+It never removes directories or anything else in the prefix.
+The manifest records only the most recent install from that build directory, so if you installed to more than one prefix, delete the copies the manifest doesn't list by hand, e.g. `rm "$HOME/.local/bin/wt"`.
+The same applies if the build directory has since been deleted.
+
 ## Testing
 
 ```sh
@@ -43,6 +77,7 @@ Tests live in `tests/`:
   Each run happens in a throwaway temp directory with its own `HOME` and Git config, so tests can't touch your real repositories.
   Tests are grouped by command in `test_<command>.cpp`; `test_cli.cpp` and `test_repository.cpp` cover behavior common to all commands.
   Helpers shared between those files live in `tests/support/e2e.hpp`.
+- `tests/install/` — installs the built binary into a throwaway prefix inside the build directory, runs it, and uninstalls it; also checks that uninstall refuses unsafe manifest entries.
 
 Each suite can also be run directly, e.g. `./build/tests/wt_unit_tests` or `./build/tests/wt_e2e_tests`.
 
@@ -503,6 +538,7 @@ After Git reports success, `wt remove` checks that Git no longer lists the workt
 
 ```
 CMakeLists.txt        # top-level build; produces build/wt
+cmake/                # install-time and uninstall scripts used by the build
 src/
   main.cpp            # entry point; delegates to wt::run
   error.hpp           # wt::Error and its kinds, exit codes, and message prefixes
@@ -513,6 +549,7 @@ src/
 tests/
   unit/               # Catch2 unit tests
   e2e/                # Catch2 tests that drive the built binary
+  install/            # CMake script testing install and uninstall
   support/            # shared test helpers (e.g. the temp-directory sandbox)
 .github/workflows/    # CI: build, test, and format check
 ```
