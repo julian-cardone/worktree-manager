@@ -12,6 +12,8 @@ Do these steps before reporting a task complete, not only right before `wt merge
 
 2. Commit the task's current changes before final verification.
 
+   After each code-changing commit, rebuild and run the relevant tests so the build reflects that commit.
+
 3. Confirm the repository still uses fast-forward-only merges:
 
    ```bash
@@ -36,7 +38,7 @@ Do these steps before reporting a task complete, not only right before `wt merge
    git rebase main
    ```
 
-5. If conflicts occur, resolve them in the task worktree:
+5. If conflicts occur, record one concise entry in `project-notes/wt-usage.md` naming the task and conflicted files, then resolve them in the task worktree:
 
    ```bash
    git add <resolved-files>
@@ -45,9 +47,11 @@ Do these steps before reporting a task complete, not only right before `wt merge
 
    Repeat until the rebase finishes.
 
+   Do not log conflict-free rebases.
+
 6. Review the resulting diff against the current `main` and account for behavioral changes that landed while the task was in progress. Resolving textual conflicts alone is not sufficient.
 
-7. Reconfigure and rebuild from the committed, rebased state:
+7. Reconfigure and rebuild from the final committed and rebased state:
 
    ```bash
    cmake -S . -B build
@@ -62,7 +66,17 @@ Do these steps before reporting a task complete, not only right before `wt merge
 
 9. Run any required formatting or additional verification for the files changed.
 
-Do not report a code-changing task complete unless the final committed and rebased state has been rebuilt and tested.
+10. Confirm the task worktree contains no unintended uncommitted changes.
+
+11. If `AGENTS.md` requires independent code review, run it against the final diff and relevant surrounding code.
+
+    The reviewer must return `APPROVE`, `FIX_REQUIRED`, or `DECISION_REQUIRED`.
+
+    Do not land unless the result is `APPROVE`.
+
+    If review causes code changes, commit them, rebuild and retest, then review the new final state again if required.
+
+Do not report a code-changing task complete unless the exact final committed and rebased state has been rebuilt and tested.
 
 ## Land the Task
 
@@ -76,7 +90,7 @@ wt merge <task> --cleanup
 
 Run it from outside the task's worktree. `--cleanup` refuses before merging anything if it would have to remove the worktree it is running from.
 
-If `wt merge` refuses because the task is behind `main`, return to the task worktree, rebase onto the latest `main`, rebuild, rerun the relevant verification, and try again.
+If `wt merge` refuses because the task is behind `main`, return to the task worktree, rebase onto the latest `main`, rebuild, rerun the relevant verification and any required independent review, and try again.
 
 Never merge `main` into the task branch as a conflict-resolution strategy. That creates backwards-looking merge history when the task later fast-forwards into `main`.
 
@@ -116,10 +130,12 @@ As tasks finish:
 
 1. Commit the task's current changes.
 2. Rebase it onto the latest `main`.
-3. Resolve conflicts and review behavioral changes in that task's worktree.
-4. Reconfigure and rebuild from the rebased commit.
-5. Rerun the full test suite and required formatting.
-6. Land and clean it up with:
+3. If the rebase conflicts, record the task and conflicted files in `project-notes/wt-usage.md`.
+4. Resolve conflicts and review behavioral changes in that task's worktree.
+5. Reconfigure and rebuild from the rebased commit.
+6. Rerun the full test suite and required formatting.
+7. Complete any required independent code review.
+8. Land and clean it up with:
 
    ```bash
    wt merge <task> --cleanup
