@@ -131,8 +131,9 @@ std::vector<Worktree> list_worktrees(const fs::path& dir) {
     constexpr int kUsageError = 129;
     if (r.exit_code != 0) {
         // Git exits 129 for options it doesn't know, here -z (added in 2.36);
-        // its message is translated, so it can't be matched reliably.
-        if (r.exit_code == kUsageError) {
+        // its message is translated, so it can't be matched reliably. A Git
+        // killed by SIGHUP reports 129 too, so that's excluded.
+        if (r.exit_code == kUsageError && !r.signaled) {
             throw wt::Error(ErrorKind::user, "wt requires Git 2.36 or newer");
         }
         throw Error(error_message(r.err));

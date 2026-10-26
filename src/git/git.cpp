@@ -142,6 +142,7 @@ std::vector<char*> git_environment() {
     return env;
 }
 
+// Waits for `pid` and returns its raw wait status.
 int wait_for(pid_t pid) {
     int status = 0;
     while (::waitpid(pid, &status, 0) < 0) {
@@ -149,10 +150,7 @@ int wait_for(pid_t pid) {
             throw std::system_error(errno, std::generic_category(), "waitpid");
         }
     }
-    if (WIFEXITED(status)) {
-        return WEXITSTATUS(status);
-    }
-    return 128 + WTERMSIG(status);  // shell convention for "killed by signal"
+    return status;
 }
 
 }  // namespace
@@ -207,7 +205,14 @@ Result run(const std::filesystem::path& dir,
         wait_for(pid);  // don't leave a zombie behind
         throw;
     }
-    result.exit_code = wait_for(pid);
+    const int status = wait_for(pid);
+    if (WIFEXITED(status)) {
+        result.exit_code = WEXITSTATUS(status);
+    } else {
+        result.signaled = true;
+        // Shell convention for "killed by signal".
+        result.exit_code = 128 + WTERMSIG(status);
+    }
     return result;
 }
 
@@ -224,6 +229,8 @@ std::string error_message(std::string_view git_stderr) {
         msg.remove_prefix(1);
     }
     msg = msg.substr(0, msg.find('\n'));
+    // Cosmetic only: Git translates these prefixes, so in other locales they
+    // stay.
     for (std::string_view prefix : {"fatal: ", "error: "}) {
         if (msg.starts_with(prefix)) {
             msg.remove_prefix(prefix.size());

@@ -13,6 +13,9 @@ struct Result {
     int exit_code;
     std::string out;
     std::string err;
+    // Git was killed by a signal, and exit_code is 128 plus its number, so
+    // it can coincide with a code Git exits with itself.
+    bool signaled = false;
 };
 
 // A Git failure worth reporting to the user as-is.

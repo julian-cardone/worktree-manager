@@ -131,3 +131,10 @@ A failed `MERGE_HEAD` or `HEAD` read after the abort was reported the same way, 
 `wt merge --cleanup` relies on that: it deletes the branch only when its current tip is contained in the integration branch, then lets `git branch -d` check again, so a branch moved in between is kept.
 Squashed or cherry-picked branches landed outside `wt` fail the check and are kept; comparing content to delete those is deliberately not done.
 `git branch -d` also checks against the branch's upstream when one exists, so `--cleanup` refuses up front when an upstream other than the integration branch lacks the task's commits.
+
+### Git's messages may be translated
+
+Git localizes its error messages, including the `fatal: ` and `error: ` prefixes, so matching their English text fails silently in other locales.
+`wt` used to recognize a Git too old for `worktree list -z` by its "unknown switch" message; in a German locale it showed Git's raw usage error instead of saying Git 2.36 is required.
+`wt` now decides from exit codes and machine-readable output (`--porcelain`, `-z`, `--format`, `--quiet`) and uses Git's messages only as diagnostics; the old-Git check keys on the usage-error exit code 129, and on Git having exited rather than been killed, since a SIGHUP is reported as 129 too.
+The e2e tests pin `LC_ALL=C`, since some assert Git's English diagnostics.

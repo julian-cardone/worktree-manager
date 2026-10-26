@@ -16,6 +16,40 @@ TEST_CASE("wt list outside a repository fails with a clear error") {
     CHECK_THAT(r.err, StartsWith("wt: git error: not a git repository"));
 }
 
+TEST_CASE("wt explains that Git is too old in any language") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    // How Git before 2.36 rejects `worktree list -z` in a German locale.
+    const Env env = git_shim(box,
+                             "if [ \"$3\" = worktree ] && [ \"$4\" = list ]; "
+                             "then\n"
+                             "  echo \"Fehler: unbekannter Schalter 'z'\" >&2\n"
+                             "  exit 129\n"
+                             "fi\n");
+
+    auto r = run_wt(box, repo, {"list"}, env);
+    CHECK(r.code == 1);
+    CHECK(r.out.empty());
+    CHECK(r.err == "wt: error: wt requires Git 2.36 or newer\n");
+}
+
+TEST_CASE("wt doesn't blame the Git version when SIGHUP kills git") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    // Killed by SIGHUP, which wt also sees as 129.
+    const Env env = git_shim(box,
+                             "if [ \"$3\" = worktree ] && [ \"$4\" = list ]; "
+                             "then\n"
+                             "  kill -HUP $$\n"
+                             "fi\n");
+
+    auto r = run_wt(box, repo, {"list"}, env);
+    CHECK(r.code == 4);
+    CHECK(r.out.empty());
+    CHECK_THAT(r.err, StartsWith("wt: git error: "));
+    CHECK_THAT(r.err, !ContainsSubstring("2.36"));
+}
+
 TEST_CASE("wt list shows a clean main worktree") {
     Sandbox box;
     const fs::path repo = make_repo(box, box.work() / "repo");

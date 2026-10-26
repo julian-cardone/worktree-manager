@@ -184,20 +184,6 @@ void make_conflict(const Sandbox& box, const fs::path& repo,
     commit_file(box, repo, "a.txt", "main\n");
 }
 
-// Environment that runs wt's git through a shell script that first runs
-// `prelude`, in which "$REAL_GIT" is the real git and wt's arguments are
-// `-C <dir> <args...>`, then the real git.
-Env git_shim(const Sandbox& box, const std::string& prelude) {
-    const fs::path bin = box.root() / "bin";
-    fs::create_directories(bin);
-    write_file(bin / "git", "#!/bin/sh\nREAL_GIT='" + find_on_path("git") +
-                                "'\n" + prelude +
-                                "exec \"$REAL_GIT\" \"$@\"\n");
-    fs::permissions(bin / "git", fs::perms::owner_all);
-    const char* path_env = std::getenv("PATH");
-    return {{"PATH", bin.string() + ":" + (path_env ? path_env : "")}};
-}
-
 }  // namespace
 
 TEST_CASE("wt merge warns that a merge may remain when the abort fails") {

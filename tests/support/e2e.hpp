@@ -51,6 +51,8 @@ inline void write_file(const fs::path& path, const std::string& content) {
 // the sandbox so user config and repositories outside it are never touched.
 // Inherited GIT_* variables are dropped: GIT_DIR or GIT_WORK_TREE (set, e.g.,
 // when tests run from a Git hook) would point git at a real repository.
+// LC_ALL=C keeps Git's messages in English, which some tests expect, whatever
+// the developer's locale.
 // `extra` adds variables on top, and must only point inside the sandbox.
 using Env = std::vector<std::pair<std::string, std::string>>;
 
@@ -61,6 +63,7 @@ inline std::vector<std::string> sandbox_env(const Sandbox& box,
         {"XDG_CONFIG_HOME", (box.home() / ".config").string()},
         {"GIT_CONFIG_NOSYSTEM", "1"},
         {"GIT_CEILING_DIRECTORIES", box.root().string()},
+        {"LC_ALL", "C"},
         {"GIT_AUTHOR_NAME", "wt test"},
         {"GIT_AUTHOR_EMAIL", "wt-test@example.invalid"},
         {"GIT_COMMITTER_NAME", "wt test"},
@@ -231,6 +234,20 @@ inline fs::path wt_new(const Sandbox& box, const fs::path& dir,
     REQUIRE(r.code == 0);
     REQUIRE(r.out.ends_with('\n'));
     return fs::path(r.out.substr(0, r.out.size() - 1));
+}
+
+// Environment that runs wt's git through a shell script that first runs
+// `prelude`, in which "$REAL_GIT" is the real git and wt's arguments are
+// `-C <dir> <args...>`, then the real git.
+inline Env git_shim(const Sandbox& box, const std::string& prelude) {
+    const fs::path bin = box.root() / "bin";
+    fs::create_directories(bin);
+    write_file(bin / "git", "#!/bin/sh\nREAL_GIT='" + find_on_path("git") +
+                                "'\n" + prelude +
+                                "exec \"$REAL_GIT\" \"$@\"\n");
+    fs::permissions(bin / "git", fs::perms::owner_all);
+    const char* path_env = std::getenv("PATH");
+    return {{"PATH", bin.string() + ":" + (path_env ? path_env : "")}};
 }
 
 inline void commit_file(const Sandbox& box, const fs::path& dir,
