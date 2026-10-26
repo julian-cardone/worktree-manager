@@ -264,7 +264,7 @@ If the integration branch already has every commit on `<task>`, it says so and d
 - `<task>` or the integration branch is in the middle of a rebase in any worktree, or a `git rebase --update-refs` there will move `<task>`, since its branch still points at the commits being rewritten;
 - `merge.ff` is set to `only` and `<task>` is behind the integration branch (see below);
 - the merge would overwrite ignored files in the integration branch's worktree, i.e. the task's branch adds a file where one is ignored (such as `.env`), which Git would otherwise replace silently;
-- there is something to merge and `branch.<integration-branch>.mergeOptions` is set to anything, since Git adds those options to every merge into that branch and some (such as `-Xours`) resolve conflicts without stopping; `wt` doesn't override the setting, so unset it (`git config --unset-all branch.main.mergeOptions`) to merge with `wt`;
+- there is something to merge and `branch.<integration-branch>.mergeOptions` or `pull.twohead` is set to anything, in any config file: Git adds those options to every merge into that branch, and uses `pull.twohead` as every merge's default strategy, not only `git pull`'s, and some values (such as `-Xours` or `ours`) resolve conflicts without stopping; `wt` doesn't override the repository's settings, so unset them where they are configured (`git config --show-origin --get-all <key>` shows where) to merge with `wt`;
 - the integration branch isn't checked out in any worktree, or `<task>` is the integration branch.
 
 **On a conflict**, `wt merge` aborts the merge with `git merge --abort`, checks that the integration branch's worktree is back exactly where it was, and lists the conflicting files:

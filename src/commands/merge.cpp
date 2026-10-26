@@ -40,35 +40,53 @@ bool fast_forward_only(const fs::path& dir) {
     return git::single_value(r.out) == "only";
 }
 
-// Fails if `branch.<base>.mergeOptions` is set. Git adds those options to
-// every merge into `base`, and some (e.g. -Xours, -s ours) settle conflicts
-// without stopping; the task is still an ancestor afterwards, so nothing
-// after the merge could tell.
-// WARNING: refuse rather than override: clearing the setting with `-c` would
-// silently ignore the repository's configuration. Any value refuses; telling
-// safe options from unsafe ones isn't worth the risk of getting one wrong.
-void check_merge_options(const git::Worktree& dest, const std::string& base) {
-    const std::string key = "branch." + base + ".mergeOptions";
-    const git::Result r =
-        git::run(dest.path, {"config", "-z", "--get-all", key});
-    if (r.exit_code == kNotFound) {
+// Fails if Git is configured to change how a merge into `base` runs: Git adds
+// `branch.<base>.mergeOptions` to every merge into `base`, and uses
+// `pull.twohead` as every merge's default strategy, not only git pull's.
+// Some values (e.g. -Xours, ours) settle conflicts without stopping, and the
+// task is still an ancestor afterwards, so nothing after the merge could tell.
+// WARNING: refuse rather than override: clearing the settings with `-c` or
+// `-s` would silently ignore the repository's configuration. Any value
+// refuses; telling safe ones from unsafe ones isn't worth getting one wrong.
+void check_merge_config(const git::Worktree& dest, const std::string& base) {
+    std::string found;
+    std::string where;
+    for (const std::string& key :
+         {"branch." + base + ".mergeOptions", std::string("pull.twohead")}) {
+        // Read where the merge runs, so it sees the same config Git will.
+        const git::Result r =
+            git::run(dest.path, {"config", "-z", "--get-all", key});
+        if (r.exit_code == kNotFound) {
+            continue;
+        }
+        if (r.exit_code != 0) {
+            throw git::Error(git::error_message(r.err));
+        }
+        std::string values;
+        std::istringstream in(r.out);
+        for (std::string value; std::getline(in, value, '\0');) {
+            values += (values.empty() ? "" : ", ") + ("'" + value + "'");
+        }
+        found += (found.empty() ? "" : "; ") + key + " is set to " + values;
+        // It may come from any config file, so say how to find it rather than
+        // offer a command that only edits one of them.
+        where += std::string(where.empty() ? "" : " and ") +
+                 "`git config --show-origin --get-all " + ui::shell_quote(key) +
+                 "`";
+    }
+    if (found.empty()) {
         return;
     }
-    if (r.exit_code != 0) {
-        throw git::Error(git::error_message(r.err));
-    }
-    std::string values;
-    std::istringstream in(r.out);
-    for (std::string value; std::getline(in, value, '\0');) {
-        values += (values.empty() ? "" : ", ") + ("'" + value + "'");
-    }
     throw Error(ErrorKind::refused,
-                key + " is set to " + values + ", which Git applies to " +
-                    "every merge into " + base +
-                    " and can resolve conflicts without stopping, so wt "
-                    "can't guarantee they are left to you; to merge with wt, "
-                    "unset it with `git config --unset-all " +
-                    ui::shell_quote(key) + "`");
+                found +
+                    ". This merge configuration can change how Git merges "
+                    "into " +
+                    base +
+                    " and resolve conflicts without stopping, so wt can't "
+                    "guarantee they are left to you, and it won't override "
+                    "the repository's settings; to merge with wt, unset them "
+                    "where they are configured (" +
+                    where + " shows where)");
 }
 
 // Explains, on stderr, that `task` must be rebased before it can land.
@@ -565,7 +583,7 @@ int land(const Context& ctx, const std::string& task, const std::string& base,
                 << "; nothing to merge\n";
         return 0;
     }
-    check_merge_options(dest, base);
+    check_merge_config(dest, base);
     // Git would refuse too, but without saying how to get the task landed.
     if (divergence.behind != 0 && fast_forward_only(dest.path)) {
         report_behind(ctx, task, base, divergence.behind, source);

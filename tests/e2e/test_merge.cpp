@@ -869,49 +869,107 @@ TEST_CASE("wt merge refuses to overwrite ignored files in main's worktree") {
     CHECK(read_file(repo / "build" / "other") == "mine\n");
 }
 
-TEST_CASE("wt merge refuses while main has merge options configured") {
+TEST_CASE(
+    "wt merge refuses while Git's merge configuration could resolve "
+    "conflicts") {
     Sandbox box;
     const fs::path repo = make_repo(box, box.work() / "repo");
     const fs::path path = wt_new(box, repo, "feature");
     commit_file(box, path, "README", "task\n");
     commit_file(box, repo, "README", "main\n");
     const std::string before = head_of(box, repo);
-    std::string values;
+    const std::string options_key = "branch.main.mergeOptions";
+    const std::string show_options =
+        "`git config --show-origin --get-all branch.main.mergeOptions`";
+    const std::string show_twohead =
+        "`git config --show-origin --get-all pull.twohead`";
+    std::string found;
+    std::string where;
 
-    SECTION("one that resolves conflicts") {
-        // Without wt's check, Git settles the conflict in main's favor and
-        // the task's change is dropped.
-        git(box, repo, {"config", "branch.main.mergeOptions", "-Xours"});
-        values = "'-Xours'";
+    SECTION("merge options that resolve conflicts") {
+        git(box, repo, {"config", options_key, "-Xours"});
+        found = "branch.main.mergeOptions is set to '-Xours'";
+        where = show_options;
     }
-    SECTION("any value, and every one of several") {
-        git(box, repo, {"config", "branch.main.mergeOptions", "--no-ff"});
-        git(box, repo,
-            {"config", "--add", "branch.main.mergeOptions", "--log"});
-        values = "'--no-ff', '--log'";
+    SECTION("any merge options, and every one of several") {
+        git(box, repo, {"config", options_key, "--no-ff"});
+        git(box, repo, {"config", "--add", options_key, "--log"});
+        found = "branch.main.mergeOptions is set to '--no-ff', '--log'";
+        where = show_options;
+    }
+    SECTION("a default strategy that resolves conflicts") {
+        git(box, repo, {"config", "pull.twohead", "ours"});
+        found = "pull.twohead is set to 'ours'";
+        where = show_twohead;
+    }
+    SECTION("any default strategy, from any config file") {
+        git(box, repo, {"config", "--global", "pull.twohead", "ort"});
+        found = "pull.twohead is set to 'ort'";
+        where = show_twohead;
+    }
+    SECTION("both") {
+        git(box, repo, {"config", options_key, "-Xours"});
+        git(box, repo, {"config", "pull.twohead", "ours"});
+        found =
+            "branch.main.mergeOptions is set to '-Xours'; pull.twohead is "
+            "set to 'ours'";
+        where = show_options + " and " + show_twohead;
     }
 
     auto r = run_wt(box, repo, {"merge", "feature"});
     CHECK(r.code == 2);
     CHECK(r.out.empty());
     CHECK(r.err ==
-          "wt: refused: branch.main.mergeOptions is set to " + values +
-              ", which Git applies to every merge into main and can resolve "
-              "conflicts without stopping, so wt can't guarantee they are "
-              "left to you; to merge with wt, unset it with `git config "
-              "--unset-all branch.main.mergeOptions`\n"
+          "wt: refused: " + found +
+              ". This merge configuration can change how Git merges into "
+              "main and resolve conflicts without stopping, so wt can't "
+              "guarantee they are left to you, and it won't override the "
+              "repository's settings; to merge with wt, unset them where "
+              "they are configured (" +
+              where +
+              " shows where)\n"
               "Nothing was merged.\n");
     check_main_restored(box, repo, before);
     CHECK(read_file(repo / "README") == "main\n");
 
     // Unset, the conflict is left to the user as usual.
-    git(box, repo, {"config", "--unset-all", "branch.main.mergeOptions"});
+    run_in(box, repo,
+           {find_on_path("git"), "config", "--unset-all", options_key});
+    run_in(box, repo,
+           {find_on_path("git"), "config", "--unset-all", "pull.twohead"});
+    run_in(box, repo,
+           {find_on_path("git"), "config", "--global", "--unset-all",
+            "pull.twohead"});
     r = run_wt(box, repo, {"merge", "feature"});
     CHECK(r.code == 3);
     check_main_restored(box, repo, before);
 }
 
-TEST_CASE("wt merge's merge options check ignores other branches") {
+TEST_CASE("Git drops a task's conflicting change under merge configuration") {
+    // Why wt merge refuses these settings: Git exits 0, and the task is still
+    // an ancestor of main, so nothing after the merge could tell.
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature");
+    commit_file(box, path, "README", "task\n");
+    commit_file(box, repo, "README", "main\n");
+
+    SECTION("pull.twohead=ours") {
+        git(box, repo, {"config", "pull.twohead", "ours"});
+    }
+    SECTION("branch.main.mergeOptions=-Xours") {
+        git(box, repo, {"config", "branch.main.mergeOptions", "-Xours"});
+    }
+
+    git(box, repo, {"merge", "-q", "--no-edit", "refs/heads/feature"});
+    CHECK(read_file(repo / "README") == "main\n");
+    CHECK(run_in(box, repo,
+                 {find_on_path("git"), "merge-base", "--is-ancestor", "feature",
+                  "main"})
+              .code == 0);
+}
+
+TEST_CASE("wt merge's merge configuration check ignores other branches") {
     Sandbox box;
     const fs::path repo = make_repo(box, box.work() / "repo");
     const fs::path path = wt_new(box, repo, "feature");
@@ -923,14 +981,16 @@ TEST_CASE("wt merge's merge options check ignores other branches") {
     CHECK(head_of(box, repo) == head_of(box, path));
 }
 
-TEST_CASE("wt merge --cleanup finishes a landed task despite merge options") {
+TEST_CASE(
+    "wt merge --cleanup finishes a landed task despite merge configuration") {
     Sandbox box;
     const fs::path repo = make_repo(box, box.work() / "repo");
     const fs::path path = wt_new(box, repo, "feature");
     commit_file(box, path, "a.txt", "a\n");
     REQUIRE(run_wt(box, repo, {"merge", "feature"}).code == 0);
-    // Nothing is merged, so there is nothing for the options to resolve.
+    // Nothing is merged, so there is nothing for the settings to resolve.
     git(box, repo, {"config", "branch.main.mergeOptions", "-Xours"});
+    git(box, repo, {"config", "pull.twohead", "ours"});
 
     auto r = run_wt(box, repo, {"merge", "feature", "--cleanup"});
     CHECK(r.code == 0);
