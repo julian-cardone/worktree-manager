@@ -80,7 +80,7 @@ When a command doesn't do what was asked, the first line on stderr and the exit 
 Scripts should treat any nonzero exit code as failure, and branch on a specific code only when they deliberately handle that category.
 
 The message also says whether anything was changed.
-When `wt new`, `wt remove`, or `wt merge` stops before changing anything, its last line says so (`No branch or worktree was created.`, `Nothing was removed.`, `Nothing was merged.`).
+When `wt new`, `wt remove`, or `wt merge` stops before changing anything, it says so (`No branch or worktree was created.`, `Nothing was removed.`, `Nothing was merged.`).
 Once a command has started changing things, it never says that; it reports what it changed or left behind, or that it couldn't verify the result and where to look.
 Earlier builds exited 1 for every failure; the categories were introduced as a deliberate breaking change while `wt` is in early development.
 

@@ -331,6 +331,22 @@ TEST_CASE(
                               "- it has no worktree\n"
                               "- its branch feature was kept\n"));
     }
+    SECTION("a branch deleted while its worktree is still there") {
+        install_hook(repo, "post-merge",
+                     "git update-ref -d refs/heads/feature\n");
+
+        auto r = run_wt(box, repo, {"merge", "feature", "--cleanup"});
+        CHECK(r.code == 2);
+        CHECK(r.out == "✓ Merged feature into main\n");
+        CHECK_THAT(r.err, ContainsSubstring(
+                              "feature has landed in main, but the cleanup "
+                              "didn't finish:\n"
+                              "- its worktree is still there (`wt list` shows "
+                              "it)\n"
+                              "- its branch feature no longer exists\n"));
+        CHECK_THAT(r.err, !ContainsSubstring("nothing is left"));
+        CHECK(registered(box, repo, path));
+    }
     SECTION("a branch deleted before wt could check") {
         auto r = run_wt(box, repo, {"merge", "feature", "--cleanup"},
                         git_fails_after(box, " branch -d "));

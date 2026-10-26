@@ -341,8 +341,7 @@ void report_unfinished(const Context& ctx, const std::string& task,
                    "retrying.\n";
         return;
     }
-    // No worktree can have a branch checked out that doesn't exist.
-    if (!has_branch) {
+    if (!has_branch && !has_worktree) {
         ctx.err << "; its worktree and branch are gone, so nothing is left "
                    "to clean up.\n";
         return;
@@ -350,8 +349,16 @@ void report_unfinished(const Context& ctx, const std::string& task,
     ctx.err << ", but the cleanup didn't finish:\n"
             << (has_worktree ? "- its worktree is still there (`wt list` "
                                "shows it)\n"
-                             : "- it has no worktree\n")
-            << "- its branch " << shown_task << " was kept\n"
+                             : "- it has no worktree\n");
+    // Git still lists a worktree whose branch was deleted under it, e.g. by
+    // a hook; rerunning can't find the task then.
+    if (!has_branch) {
+        ctx.err << "- its branch " << shown_task << " no longer exists\n"
+                << "\nCheck it with `wt list` and `git branch` before "
+                   "removing anything.\n";
+        return;
+    }
+    ctx.err << "- its branch " << shown_task << " was kept\n"
             << "\nOnce that's dealt with, finish the cleanup with:\n\n"
             << "  wt merge " << ui::printable(ui::shell_quote(task))
             << " --cleanup" << (delete_ignored ? " --delete-ignored" : "")
