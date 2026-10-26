@@ -314,6 +314,19 @@ inline void stop_git_am(const Sandbox& box, const fs::path& dir) {
     REQUIRE(git_output(box, dir, {"status", "--porcelain"}).empty());
 }
 
+// Merges `branch` into the worktree at `dir`, where it must conflict, and
+// leaves the merge stopped: what an interrupted `wt merge` leaves behind.
+inline void stop_conflicted_merge(const Sandbox& box, const fs::path& dir,
+                                  const std::string& branch) {
+    const Result r =
+        run_in(box, dir, {find_on_path("git"), "merge", "-q", branch});
+    REQUIRE(r.code != 0);
+    git(box, dir, {"rev-parse", "-q", "--verify", "MERGE_HEAD"});
+    REQUIRE_FALSE(
+        git_output(box, dir, {"diff", "--name-only", "--diff-filter=U"})
+            .empty());
+}
+
 inline std::string head_of(const Sandbox& box, const fs::path& dir) {
     return git_output(box, dir, {"rev-parse", "HEAD"});
 }

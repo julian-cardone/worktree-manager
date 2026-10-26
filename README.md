@@ -91,6 +91,13 @@ Earlier builds exited 1 for every failure; the categories were introduced as a d
 | 5 | `wt: internal error:` | `wt` hit something it doesn't understand, such as unexpected Git output. Probably a bug in `wt`. | Check the affected worktrees with `git status` before retrying. |
 | 100+ | | The command line couldn't be parsed (from CLI11). | See `wt --help`. |
 
+#### Interrupted commands
+
+`wt` installs no signal handlers, so Ctrl+C stops it along with the Git command it is running, and `wt` attempts no cleanup of its own.
+Git keeps its own state consistent when interrupted, but may be left in the middle of an operation, such as a merge `wt merge` was about to abort.
+The next `wt merge` or `wt remove` then refuses that worktree; finish or abort the operation with Git, then rerun.
+If `wt merge --cleanup` is interrupted after the task has landed, rerunning it completes the cleanup.
+
 ### `wt list`
 
 Works from the main checkout or any linked worktree, and always lists the main worktree first.

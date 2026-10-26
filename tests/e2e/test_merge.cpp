@@ -531,7 +531,7 @@ TEST_CASE("wt merge refuses when main is in the middle of an operation") {
     const fs::path repo = make_repo(box, box.work() / "repo");
     const fs::path path = wt_new(box, repo, "feature");
     commit_file(box, path, "a.txt", "a\n");
-    // Each of these can leave main checked out and its files clean.
+    // Most of these can leave main checked out and its files clean.
     std::string operation;
     SECTION("a merge") {
         // A merge whose changes are already resolved.
@@ -553,6 +553,12 @@ TEST_CASE("wt merge refuses when main is in the middle of an operation") {
     SECTION("a bisect") {
         git(box, repo, {"bisect", "start"});
         operation = "a bisect";
+    }
+    SECTION("a conflicted merge") {
+        // Git won't commit or stash this, so the operation must be named.
+        commit_file(box, repo, "a.txt", "main\n");
+        stop_conflicted_merge(box, repo, "feature");
+        operation = "a merge";
     }
     const std::string before = head_of(box, repo);
 
@@ -605,6 +611,11 @@ TEST_CASE("wt merge refuses when the task is in the middle of an operation") {
     SECTION("a git am") {
         stop_git_am(box, path);
         operation = "a git am";
+    }
+    SECTION("a conflicted merge") {
+        commit_file(box, repo, "a.txt", "main\n");
+        stop_conflicted_merge(box, path, "main");
+        operation = "a merge";
     }
     const std::string before = head_of(box, repo);
 

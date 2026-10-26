@@ -20,3 +20,4 @@ The refusal is intended, but it makes the flag routine, which weakens it as a gu
 ## Rebase conflicts
 
 - `git-locale-independence`: `src/git/worktree.cpp` conflicted with `c125008`, which landed the same exit-code-129 change in parallel; kept `main`'s version and reapplied only the SIGHUP guard.
+- `interrupted-operation-guidance`: `src/commands/merge.cpp` `check_destination` conflicted with `cb30563`, which added a checked-out-branch check where this task reordered the operation and dirty checks; kept both, branch check first.

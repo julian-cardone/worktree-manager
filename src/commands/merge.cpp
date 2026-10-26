@@ -75,14 +75,8 @@ void check_destination(const git::Worktree& dest, const std::string& base) {
     const auto status = git::worktree_status(dest);
     switch (status.status) {
         case git::Status::clean:
-            break;
         case git::Status::dirty:
-            throw Error(
-                ErrorKind::refused,
-                where +
-                    " has uncommitted changes; commit or stash them before "
-                    "merging into " +
-                    base);
+            break;
         case git::Status::missing:
             throw Error(ErrorKind::user, where + " no longer exists");
         case git::Status::bare:
@@ -97,10 +91,19 @@ void check_destination(const git::Worktree& dest, const std::string& base) {
         throw Error(ErrorKind::refused, where + " no longer has " + base +
                                             " checked out; nothing was merged");
     }
+    // Checked before the changes because an interrupted merge leaves both,
+    // and Git won't commit or stash while conflicts are unresolved.
     if (auto operation = git::operation_in_progress(dest.path)) {
         throw Error(ErrorKind::refused, where + " is in the middle of " +
                                             *operation +
                                             "; finish or abort it first");
+    }
+    if (status.status == git::Status::dirty) {
+        throw Error(ErrorKind::refused,
+                    where +
+                        " has uncommitted changes; commit or stash them before "
+                        "merging into " +
+                        base);
     }
 }
 
@@ -113,27 +116,29 @@ void check_source(const git::Worktree& source, const std::string& task) {
     const auto status = git::worktree_status(source);
     switch (status.status) {
         case git::Status::clean:
+        case git::Status::dirty:
             break;
         // Its commits are all on the branch; only the directory is gone.
         case git::Status::missing:
             return;
-        case git::Status::dirty:
-            throw Error(
-                ErrorKind::refused,
-                "the worktree for '" + task +
-                    "' has uncommitted changes, which the merge wouldn't "
-                    "include; commit or stash them first (`wt status " +
-                    ui::shell_quote(task) + "` shows them)");
         case git::Status::bare:
         case git::Status::unknown:
             throw Error(ErrorKind::refused, "cannot read the status of " +
                                                 source.path.string() + ": " +
                                                 status.detail);
     }
+    // Checked before the changes, as for the destination.
     if (auto operation = git::operation_in_progress(source.path)) {
         throw Error(ErrorKind::refused,
                     "the worktree for '" + task + "' is in the middle of " +
                         *operation + "; finish or abort it, then merge again");
+    }
+    if (status.status == git::Status::dirty) {
+        throw Error(ErrorKind::refused,
+                    "the worktree for '" + task +
+                        "' has uncommitted changes, which the merge wouldn't "
+                        "include; commit or stash them first (`wt status " +
+                        ui::shell_quote(task) + "` shows them)");
     }
 }
 
