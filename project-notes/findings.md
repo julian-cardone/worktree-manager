@@ -115,6 +115,14 @@ When a task has merged `main` in, landing it fast-forwards, so `main`'s first-pa
 `wt` follows Git's merge settings rather than picking a strategy; this repository uses `merge.ff=only` and rebases tasks (see `docs/agent-workflows/landing-tasks.md`).
 `wt merge` explains the rebase step when `merge.ff=only` blocks a task that is behind.
 
+### A failed check after a change looked like nothing had happened
+
+`wt new`, `wt remove`, and `wt merge` verify Git's result after mutating, but an exception from that verification (or from `git::run` after Git started) escaped to the top level as a bare one-line error.
+A `wt merge` whose `post-merge` hook broke the repository's config printed only `wt: git error: bad config line`, although `main` had moved.
+`wt merge --cleanup` also reported "its worktree is still there" and "its branch was kept" from flags rather than Git, which was wrong for a task with no worktree or a branch deleted before the check failed.
+Each command now reports every failure from its first mutation on itself and says the result is unverified, and the cleanup report reads what is left from Git.
+That makes an error that escapes a command proof nothing was changed, so `app.cpp` says so (`Nothing was removed.` and so on); a new mutation must keep that true.
+
 ### Git's exit code doesn't prove the operation happened
 
 Hooks run after Git has done its work and can undo or change it without Git failing: a `post-checkout` hook can switch a new worktree to another branch, and a `post-merge` hook can reset the merge away.

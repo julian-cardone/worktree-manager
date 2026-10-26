@@ -397,6 +397,28 @@ TEST_CASE("wt merge fails when Git succeeds but leaves main's worktree dirty") {
     CHECK(read_file(repo / "stray.txt") == "x\n");
 }
 
+TEST_CASE("wt merge doesn't claim nothing was merged when it can't check") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature");
+    commit_file(box, path, "a.txt", "a\n");
+
+    auto r = run_wt(box, repo, {"merge", "feature"},
+                    git_fails_after(box, " merge --no-edit "));
+    CHECK(r.code == 4);
+    CHECK(r.out.empty());
+    CHECK_THAT(r.err, StartsWith("wt: git error: git merge reported success, "
+                                 "but wt could not check the result: "
+                                 "simulated failure\n"));
+    CHECK_THAT(r.err, ContainsSubstring(
+                          "\nThe result could not be verified; "
+                          "inspect main's worktree with `git -C " +
+                          repo.string() + " status` before retrying.\n"));
+    CHECK_THAT(r.err, !ContainsSubstring("Nothing was merged"));
+    // The merge happened and is left in place.
+    CHECK(head_of(box, repo) == head_of(box, path));
+}
+
 TEST_CASE("wt merge fails when Git succeeds but main's worktree leaves main") {
     Sandbox box;
     const fs::path repo = make_repo(box, box.work() / "repo");
@@ -443,6 +465,7 @@ TEST_CASE("wt merge explains how to land a task when merge.ff is only") {
           "\n"
           "second is 1 commit behind main, and merge.ff is set to "
           "\"only\".\n"
+          "Nothing was merged.\n"
           "Rebase it onto main in its worktree, resolving any "
           "conflicts there:\n"
           "\n"
@@ -492,6 +515,7 @@ TEST_CASE("wt merge explains how to land a behind task without a worktree") {
           "\n"
           "feature is 2 commits behind main, and merge.ff is set to "
           "\"only\".\n"
+          "Nothing was merged.\n"
           "feature has no worktree; rebase it onto main wherever you "
           "check it out.\n"
           "Then run `wt merge feature` again.\n");
@@ -521,7 +545,7 @@ TEST_CASE("wt merge refuses when main's worktree isn't clean") {
     CHECK(r.out.empty());
     CHECK(r.err == "wt: refused: main's worktree at " + repo.string() +
                        " has uncommitted changes; commit or stash them "
-                       "before merging into main\n");
+                       "before merging into main\nNothing was merged.\n");
     CHECK(head_of(box, repo) == before);
     CHECK_FALSE(fs::exists(repo / "a.txt"));
 }
@@ -566,7 +590,7 @@ TEST_CASE("wt merge refuses when main is in the middle of an operation") {
     CHECK(r.code == 2);
     CHECK(r.err == "wt: refused: main's worktree at " + repo.string() +
                        " is in the middle of " + operation +
-                       "; finish or abort it first\n");
+                       "; finish or abort it first\nNothing was merged.\n");
     CHECK(head_of(box, repo) == before);
 }
 
@@ -590,7 +614,8 @@ TEST_CASE("wt merge refuses when main is being rebased") {
           "wt: refused: the integration branch 'main' is being "
           "rebased in " +
               repo.string() +
-              "; finish or abort the rebase, then merge again\n");
+              "; finish or abort the rebase, then merge again\nNothing was "
+              "merged.\n");
     CHECK(git_output(box, repo, {"rev-parse", "main"}) == main_before);
 }
 
@@ -625,7 +650,8 @@ TEST_CASE("wt merge refuses when the task is in the middle of an operation") {
     CHECK(r.err ==
           "wt: refused: the worktree for 'feature' is in the middle "
           "of " +
-              operation + "; finish or abort it, then merge again\n");
+              operation +
+              "; finish or abort it, then merge again\nNothing was merged.\n");
     CHECK(head_of(box, repo) == before);
 }
 
@@ -643,7 +669,7 @@ TEST_CASE("wt merge refuses when the task has uncommitted changes") {
     CHECK(r.err ==
           "wt: refused: the worktree for 'feature' has uncommitted changes, "
           "which the merge wouldn't include; commit or stash them first "
-          "(`wt status feature` shows them)\n");
+          "(`wt status feature` shows them)\nNothing was merged.\n");
     CHECK(head_of(box, repo) == before);
     CHECK(read_file(path / "forgotten.txt") == "not committed\n");
 }
@@ -675,7 +701,7 @@ TEST_CASE("wt merge refuses when something else is at the task's path") {
     CHECK(r.code == 2);
     CHECK(r.out.empty());
     CHECK(r.err == "wt: refused: cannot read the status of " + path.string() +
-                       ": it is not a directory\n");
+                       ": it is not a directory\nNothing was merged.\n");
     CHECK(head_of(box, repo) == before);
     CHECK(read_file(path) == "keep me");
 }
@@ -764,7 +790,8 @@ TEST_CASE("wt merge refuses a task that git rebase --update-refs will move") {
     CHECK(r.err == "wt: refused: 'feature' is being rebased in " +
                        top.string() +
                        "; finish the rebase (`git rebase --continue`) or "
-                       "abort it (`git rebase --abort`), then merge again\n");
+                       "abort it (`git rebase --abort`), then merge "
+                       "again\nNothing was merged.\n");
     CHECK(git_output(box, repo, {"rev-parse", "feature"}) == task_before);
     CHECK(run_in(box, repo,
                  {find_on_path("git"), "merge-base", "--is-ancestor",
@@ -799,7 +826,8 @@ TEST_CASE("wt merge refuses when --update-refs state can't be understood") {
     const auto r = run_wt(box, repo, {"merge", "feature"});
     CHECK(r.code == 2);
     CHECK(r.err == "wt: refused: cannot understand " +
-                       (state / "update-refs").string() + "\n");
+                       (state / "update-refs").string() +
+                       "\nNothing was merged.\n");
     CHECK(head_of(box, repo) == before);
 }
 
@@ -826,7 +854,7 @@ TEST_CASE("wt merge refuses to overwrite ignored files in main's worktree") {
           "Merging would overwrite these ignored files in main's worktree:\n"
           "- .env\n"
           "- build\n"
-          "\n"
+          "\nNothing was merged.\n"
           "Move them out of the way first.\n");
     CHECK(head_of(box, repo) == before);
     CHECK(read_file(repo / ".env") == "SECRET=mine\n");
@@ -852,7 +880,7 @@ TEST_CASE("wt merge needs main checked out somewhere") {
     CHECK(r.code == 1);
     CHECK(r.err ==
           "wt: error: the integration branch 'main' isn't checked out in any "
-          "worktree; check it out to merge into it\n");
+          "worktree; check it out to merge into it\nNothing was merged.\n");
     CHECK(git_output(box, repo, {"rev-parse", "main"}) != head_of(box, path));
 }
 
@@ -864,12 +892,13 @@ TEST_CASE("wt merge rejects the integration branch and unknown branches") {
     CHECK(r.code == 1);
     CHECK(r.err ==
           "wt: error: 'main' is the integration branch; there is "
-          "nothing to merge it into\n");
+          "nothing to merge it into\nNothing was merged.\n");
 
     for (const std::string task : {"nope", "-x", "a..b"}) {
         r = run_wt(box, repo, {"merge", "--", task});
         CHECK(r.code == 1);
-        CHECK(r.err == "wt: error: no branch named '" + task + "'\n");
+        CHECK(r.err == "wt: error: no branch named '" + task +
+                           "'\nNothing was merged.\n");
     }
 }
 

@@ -53,7 +53,7 @@ TEST_CASE("wt remove refuses a worktree with uncommitted changes") {
           "    new.txt\n"
           "\n"
           "Commit or stash these changes (`git stash -u` includes untracked "
-          "files).\n");
+          "files).\nNothing was removed.\n");
     check_untouched(box, repo, path, "feature-x");
     CHECK(read_file(path / "a.txt") == "changed\n");
     CHECK(read_file(path / "new.txt") == "new\n");
@@ -135,7 +135,8 @@ TEST_CASE("wt remove refuses each kind of uncommitted change") {
     auto r = run_wt(box, repo, {"remove", "feature"});
     CHECK(r.code == 2);
     CHECK(r.out.empty());
-    CHECK(r.err == "wt: refused: cannot remove feature\n\n" + expected);
+    CHECK(r.err == "wt: refused: cannot remove feature\n\n" + expected +
+                       "Nothing was removed.\n");
     CHECK(registered(box, repo, path));
     CHECK(fs::is_directory(path));
 }
@@ -168,7 +169,7 @@ TEST_CASE("wt remove cuts a long list of untracked files short") {
           "    ... and 2 more\n"
           "\n"
           "Commit or delete the untracked files, or stash them with "
-          "`git stash -u`.\n");
+          "`git stash -u`.\nNothing was removed.\n");
     check_untouched(box, repo, path, "feature");
     CHECK(read_file(path / "n11.txt") == "new\n");
 }
@@ -195,7 +196,7 @@ TEST_CASE("wt remove refuses ignored files unless told to delete them") {
           "    secret.env\n"
           "\n"
           "Ignored files are deleted with the worktree; move any you need, "
-          "then rerun with --delete-ignored.\n");
+          "then rerun with --delete-ignored.\nNothing was removed.\n");
     CHECK(read_file(path / "secret.env") == "token\n");
     CHECK(registered(box, repo, path));
 
@@ -203,19 +204,20 @@ TEST_CASE("wt remove refuses ignored files unless told to delete them") {
         write_file(path / "new.txt", "new\n");
         r = run_wt(box, repo, {"remove", "feature"});
         CHECK(r.code == 2);
-        CHECK(r.err ==
-              "wt: refused: cannot remove feature\n"
-              "\n"
-              "  1 untracked file\n"
-              "    new.txt\n"
-              "  2 ignored files\n"
-              "    build/\n"
-              "    secret.env\n"
-              "\n"
-              "Commit or delete the untracked files, or stash them with "
-              "`git stash -u`.\n"
-              "Ignored files are deleted with the worktree; move any you "
-              "need, then rerun with --delete-ignored.\n");
+        CHECK(
+            r.err ==
+            "wt: refused: cannot remove feature\n"
+            "\n"
+            "  1 untracked file\n"
+            "    new.txt\n"
+            "  2 ignored files\n"
+            "    build/\n"
+            "    secret.env\n"
+            "\n"
+            "Commit or delete the untracked files, or stash them with "
+            "`git stash -u`.\n"
+            "Ignored files are deleted with the worktree; move any you "
+            "need, then rerun with --delete-ignored.\nNothing was removed.\n");
 
         // --delete-ignored never lets uncommitted changes through.
         r = run_wt(box, repo, {"remove", "--delete-ignored", "feature"});
@@ -227,7 +229,7 @@ TEST_CASE("wt remove refuses ignored files unless told to delete them") {
               "    new.txt\n"
               "\n"
               "Commit or delete the untracked files, or stash them with "
-              "`git stash -u`.\n");
+              "`git stash -u`.\nNothing was removed.\n");
         CHECK(read_file(path / "new.txt") == "new\n");
         CHECK(read_file(path / "secret.env") == "token\n");
     }
@@ -237,24 +239,25 @@ TEST_CASE("wt remove refuses ignored files unless told to delete them") {
         }
         r = run_wt(box, repo, {"remove", "feature"});
         CHECK(r.code == 2);
-        CHECK(r.err ==
-              "wt: refused: cannot remove feature\n"
-              "\n"
-              "  12 ignored files\n"
-              "    build/\n"
-              "    k0.env\n"
-              "    k1.env\n"
-              "    k2.env\n"
-              "    k3.env\n"
-              "    k4.env\n"
-              "    k5.env\n"
-              "    k6.env\n"
-              "    k7.env\n"
-              "    k8.env\n"
-              "    ... and 2 more\n"
-              "\n"
-              "Ignored files are deleted with the worktree; move any you "
-              "need, then rerun with --delete-ignored.\n");
+        CHECK(
+            r.err ==
+            "wt: refused: cannot remove feature\n"
+            "\n"
+            "  12 ignored files\n"
+            "    build/\n"
+            "    k0.env\n"
+            "    k1.env\n"
+            "    k2.env\n"
+            "    k3.env\n"
+            "    k4.env\n"
+            "    k5.env\n"
+            "    k6.env\n"
+            "    k7.env\n"
+            "    k8.env\n"
+            "    ... and 2 more\n"
+            "\n"
+            "Ignored files are deleted with the worktree; move any you "
+            "need, then rerun with --delete-ignored.\nNothing was removed.\n");
     }
     SECTION("--delete-ignored removes them") {
         r = run_wt(box, repo, {"remove", "feature", "--delete-ignored"});
@@ -283,7 +286,8 @@ TEST_CASE("wt remove refuses to forget a worktree whose directory is gone") {
               "If it was moved, `git worktree repair <new-path>` reconnects "
               "it.\n"
               "If it's gone for good, `wt remove gone --forget-missing` "
-              "removes only Git's record of it and keeps the branch.\n");
+              "removes only Git's record of it and keeps the branch.\nNothing "
+              "was removed.\n");
     CHECK(registered(box, repo, path));
 
     git(box, repo, {"worktree", "repair", moved.string()});
@@ -325,20 +329,22 @@ TEST_CASE("wt remove --forget-missing only applies when nothing is there") {
 
     SECTION("the worktree is there") {
         err = "wt: refused: " + path.string() +
-              " is there, so --forget-missing doesn't apply; nothing was "
-              "removed\n";
+              " is there, so --forget-missing doesn't apply\n"
+              "Nothing was removed.\n";
     }
     SECTION("a file is there") {
         fs::rename(path, moved);
         write_file(path, "keep me");
         err = "wt: refused: " + path.string() +
-              " is not a directory, so wt won't remove it\n";
+              " is not a directory, so wt won't remove it\n"
+              "Nothing was removed.\n";
     }
     SECTION("a dangling symlink is there") {
         fs::rename(path, moved);
         fs::create_directory_symlink(box.work() / "nowhere", path);
         err = "wt: refused: " + path.string() +
-              " is not a directory, so wt won't remove it\n";
+              " is not a directory, so wt won't remove it\n"
+              "Nothing was removed.\n";
     }
 
     auto r = run_wt(box, repo, {"remove", "feature", "--forget-missing"});
@@ -385,7 +391,7 @@ TEST_CASE("wt remove refuses the main worktree") {
         CHECK(r.out.empty());
         CHECK(r.err == "wt: refused: '" + branch +
                            "' is checked out in the main worktree, which wt "
-                           "never removes\n");
+                           "never removes\nNothing was removed.\n");
     }
     check_untouched(box, repo, repo, branch);
 }
@@ -408,7 +414,8 @@ TEST_CASE("wt remove refuses a worktree wt didn't create") {
         CHECK(r.out.empty());
         CHECK(r.err == "wt: refused: the worktree for '" + std::string(task) +
                            "' at " + path.string() +
-                           " wasn't created by wt, so wt won't remove it\n");
+                           " wasn't created by wt, so wt won't remove "
+                           "it\nNothing was removed.\n");
         check_untouched(box, repo, path, task);
     }
 }
@@ -448,7 +455,7 @@ TEST_CASE("wt remove refuses the worktree it's run from") {
         CHECK(r.out.empty());
         CHECK(r.err ==
               "wt: refused: you are inside the worktree for 'feature'; run wt "
-              "remove from somewhere else\n");
+              "remove from somewhere else\nNothing was removed.\n");
         check_untouched(box, repo, path, "feature");
     }
 
@@ -475,7 +482,7 @@ TEST_CASE("wt remove refuses a locked worktree") {
         r.err ==
         "wt: refused: the worktree for 'feature' is locked; if it's no longer "
         "needed, unlock it with `git worktree unlock " +
-            path.string() + "`\n");
+            path.string() + "`\nNothing was removed.\n");
     check_untouched(box, repo, path, "feature");
 }
 
@@ -502,7 +509,7 @@ TEST_CASE("wt remove refuses a worktree in the middle of an operation") {
     CHECK(r.err ==
           "wt: refused: the worktree for 'feature' is in the middle "
           "of " +
-              operation + "; finish or abort it first\n");
+              operation + "; finish or abort it first\nNothing was removed.\n");
     check_untouched(box, repo, path, "feature");
 }
 
@@ -518,7 +525,7 @@ TEST_CASE(
     CHECK(r.code == 2);
     CHECK(r.err ==
           "wt: refused: the worktree for 'feature' is in the middle of a "
-          "bisect; finish or abort it first\n");
+          "bisect; finish or abort it first\nNothing was removed.\n");
     check_untouched(box, repo, path, "feature");
 }
 
@@ -541,7 +548,8 @@ TEST_CASE("wt remove refuses a worktree path that isn't a real directory") {
     CHECK(r.code == 2);
     CHECK(r.out.empty());
     CHECK(r.err == "wt: refused: " + path.string() +
-                       " is not a directory, so wt won't remove it\n");
+                       " is not a directory, so wt won't remove it\nNothing "
+                       "was removed.\n");
     CHECK(registered(box, repo, path));
     CHECK(read_file(moved / "README") == "hello\n");
     if (fs::is_regular_file(fs::symlink_status(path))) {
@@ -559,7 +567,8 @@ TEST_CASE("wt remove refuses a worktree whose status can't be read") {
     CHECK(r.code == 2);
     CHECK(r.out.empty());
     CHECK(r.err == "wt: refused: cannot read the status of " + path.string() +
-                       ": its .git file is missing; not removing it\n");
+                       ": its .git file is missing; not removing it\nNothing "
+                       "was removed.\n");
     CHECK(fs::is_regular_file(path / "README"));
     CHECK(registered(box, repo, path));
 }
@@ -589,6 +598,26 @@ TEST_CASE("wt remove reports Git's failure and what is left") {
     CHECK(read_file(path / "locked" / "data") == "data\n");
 }
 
+TEST_CASE("wt remove doesn't claim nothing was removed when it can't check") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature");
+
+    auto r = run_wt(box, repo, {"remove", "feature"},
+                    git_fails_after(box, " worktree remove "));
+    CHECK(r.code == 4);
+    CHECK(r.out.empty());
+    CHECK(r.err ==
+          "wt: git error: git worktree remove reported success, but wt could "
+          "not check the result: simulated failure (" +
+              path.string() +
+              ")\n"
+              "wt: the result could not be verified; inspect it with `wt "
+              "list` before retrying\n");
+    CHECK_FALSE(registered(box, repo, path));
+    CHECK_FALSE(fs::exists(path));
+}
+
 TEST_CASE("wt remove fails for a task without a worktree") {
     Sandbox box;
     const fs::path repo = make_repo(box, box.work() / "repo");
@@ -598,12 +627,14 @@ TEST_CASE("wt remove fails for a task without a worktree") {
     CHECK(r.code == 1);
     CHECK(r.out.empty());
     CHECK(r.err ==
-          "wt: error: no worktree for task 'nope'; `wt list` shows them all\n");
+          "wt: error: no worktree for task 'nope'; `wt list` shows them "
+          "all\nNothing was removed.\n");
 
     r = run_wt(box, repo, {"remove", "parked"});
     CHECK(r.code == 1);
     CHECK(r.err ==
-          "wt: error: branch 'parked' isn't checked out in any worktree\n");
+          "wt: error: branch 'parked' isn't checked out in any "
+          "worktree\nNothing was removed.\n");
     CHECK(git_output(box, repo, {"branch", "--list", "parked"}) == "  parked");
 }
 

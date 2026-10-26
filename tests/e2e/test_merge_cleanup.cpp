@@ -111,7 +111,8 @@ TEST_CASE(
     CHECK(r.out.empty());
     CHECK(r.err ==
           "wt: refused: 'foo' is checked out in the main worktree, which wt "
-          "never removes\n");
+          "never removes\n"
+          "Nothing was merged.\n");
     check_main_restored(box, integration, before);
     check_untouched(box, repo, repo, "foo");
     CHECK(head_of(box, repo) == foo);
@@ -132,7 +133,8 @@ TEST_CASE(
     CHECK(r.out.empty());
     CHECK(r.err ==
           "wt: refused: you are inside the worktree for 'feature'; run wt "
-          "merge from somewhere else\n");
+          "merge from somewhere else\n"
+          "Nothing was merged.\n");
     check_main_restored(box, repo, before);
     check_untouched(box, repo, path, "feature");
 }
@@ -308,6 +310,41 @@ TEST_CASE(
     CHECK_FALSE(branch_exists(box, repo, "feature"));
 }
 
+TEST_CASE(
+    "wt merge --cleanup reports what is left, not what it expected to "
+    "leave") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature");
+    commit_file(box, path, "a.txt", "a\n");
+
+    SECTION("a task whose worktree was removed earlier") {
+        REQUIRE(run_wt(box, repo, {"remove", "feature"}).code == 0);
+        install_hook(repo, "post-merge", add_commit_to("feature"));
+
+        auto r = run_wt(box, repo, {"merge", "feature", "--cleanup"});
+        CHECK(r.code == 2);
+        CHECK(r.out == "✓ Merged feature into main\n");
+        CHECK_THAT(r.err, ContainsSubstring(
+                              "feature has landed in main, but the cleanup "
+                              "didn't finish:\n"
+                              "- it has no worktree\n"
+                              "- its branch feature was kept\n"));
+    }
+    SECTION("a branch deleted before wt could check") {
+        auto r = run_wt(box, repo, {"merge", "feature", "--cleanup"},
+                        git_fails_after(box, " branch -d "));
+        CHECK(r.code == 4);
+        CHECK_THAT(r.err, EndsWith("\nfeature has landed in main, but the "
+                                   "cleanup didn't finish, and wt could not "
+                                   "check what is left: simulated failure\n"
+                                   "Check it with `wt list` and `git branch` "
+                                   "before retrying.\n"));
+        CHECK_THAT(r.err, !ContainsSubstring("was kept"));
+        CHECK_FALSE(branch_exists(box, repo, "feature"));
+    }
+}
+
 TEST_CASE("wt merge --cleanup keeps a branch that moved after landing") {
     Sandbox box;
     const fs::path repo = make_repo(box, box.work() / "repo");
@@ -332,7 +369,7 @@ TEST_CASE("wt merge --cleanup keeps a branch that moved after landing") {
               "\n"
               "feature has landed in main, but the cleanup didn't "
               "finish:\n"
-              "- its worktree was removed\n"
+              "- it has no worktree\n"
               "- its branch feature was kept\n"
               "\n"
               "Once that's dealt with, finish the cleanup with:\n"
@@ -424,7 +461,8 @@ TEST_CASE(
           "wt: refused: 'feature' has commits its upstream refs/heads/other "
           "doesn't, so Git wouldn't delete the branch once it lands; update "
           "the upstream or unset it (`git branch --unset-upstream feature`), "
-          "then rerun; nothing was merged\n");
+          "then rerun\n"
+          "Nothing was merged.\n");
     check_main_restored(box, repo, before);
     check_untouched(box, repo, path, "feature");
 }

@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <exception>
 #include <filesystem>
 #include <optional>
 #include <ostream>
@@ -369,11 +370,22 @@ int new_command(const Context& ctx, const std::string& task) {
     }
     // Read now, so nothing can fail between creating and reporting.
     const std::string start_summary = git::commit_summary(ctx.repo, *start);
-    // "--" keeps the path from being read as an option.
-    const git::Result result = git::run(
-        ctx.repo,
-        {"worktree", "add", "-b", branch, "--", target.string(), *start});
-    if (result.exit_code != 0) {
+    // WARNING: from here on Git may have created the branch or the worktree,
+    // so every failure is reported with what exists now, never thrown; an
+    // error that escapes wt new means nothing was created.
+    git::Result result{0, {}, {}};
+    std::optional<std::string> problem;
+    try {
+        // "--" keeps the path from being read as an option.
+        result = git::run(ctx.repo, {"worktree", "add", "-b", branch, "--",
+                                     target.string(), *start});
+    } catch (const std::exception& e) {
+        problem = std::string(
+                      "wt could not tell whether git worktree add "
+                      "finished: ") +
+                  e.what();
+    }
+    if (!problem && result.exit_code != 0) {
         ctx.err << error_prefix(ErrorKind::git)
                 << "git worktree add failed with exit code " << result.exit_code
                 << '\n';
@@ -384,12 +396,21 @@ int new_command(const Context& ctx, const std::string& task) {
         report_state(ctx, branch, target, *start);
         return exit_code(ErrorKind::git);
     }
+    if (!problem) {
+        try {
+            problem = creation_problem(ctx, branch, target, *start);
+        } catch (const std::exception& e) {
+            problem = std::string("wt could not check the result: ") + e.what();
+        }
+        if (problem) {
+            problem = "git worktree add reported success, but " + *problem;
+        }
+    }
     // Nothing goes on stdout, so `cd "$(wt new ...)"` can't land somewhere
     // unexpected.
-    if (auto problem = creation_problem(ctx, branch, target, *start)) {
-        ctx.err << error_prefix(ErrorKind::git)
-                << "git worktree add reported success, but "
-                << ui::printable(*problem) << '\n';
+    if (problem) {
+        ctx.err << error_prefix(ErrorKind::git) << ui::printable(*problem)
+                << '\n';
         report_state(ctx, branch, target, *start);
         return exit_code(ErrorKind::git);
     }

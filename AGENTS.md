@@ -51,7 +51,7 @@ These must always hold. Review every command, new or changed, against each of th
 | Conflict resolution stays manual | `wt` never guesses how a conflict should be resolved. |
 | Unknown state means stop | Never treat uncertainty as safety. |
 | User input never becomes shell syntax | Pass arguments as argv, never through a shell; quote commands printed for users to paste. |
-| Errors explain recovery | Say what happened and what the user should do next. |
+| Errors explain recovery | Say what stopped the operation, whether `wt` changed anything, and what the user should do next. Never say nothing changed once a mutation may have started. |
 
 ### Practices
 

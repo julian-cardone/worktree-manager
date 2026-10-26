@@ -158,7 +158,7 @@ TEST_CASE("wt manages worktrees under a decomposed Unicode folder name") {
     CHECK(r.code == 2);
     CHECK(r.err ==
           "wt: refused: you are inside the worktree for 'feature'; run wt "
-          "remove from somewhere else\n");
+          "remove from somewhere else\nNothing was removed.\n");
     CHECK(fs::is_regular_file(path / "README"));
 
     r = run_wt(box, repo, {"remove", "feature"});

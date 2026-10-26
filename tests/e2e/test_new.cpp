@@ -244,7 +244,8 @@ TEST_CASE("wt new refuses a branch that already exists") {
     CHECK(r.out.empty());
     CHECK(r.err ==
           "wt: error: branch 'feature' already exists; wt new only "
-          "creates new branches, so choose another task name\n");
+          "creates new branches, so choose another task name\nNo branch or "
+          "worktree was created.\n");
     CHECK(entries(box.work()) == std::vector<fs::path>{repo});
     CHECK(git_output(box, repo, {"rev-parse", "feature"}) == tip);
 }
@@ -262,7 +263,7 @@ TEST_CASE("wt new says where an existing branch is checked out") {
           "checked out at " +
               path.string() +
               "; wt new only creates new branches, so choose "
-              "another task name\n");
+              "another task name\nNo branch or worktree was created.\n");
 }
 
 TEST_CASE("wt new refuses a branch Git can't create next to an existing one") {
@@ -287,7 +288,7 @@ TEST_CASE("wt new refuses a branch Git can't create next to an existing one") {
     CHECK(r.err == "wt: error: cannot create branch '" + task +
                        "' because branch '" + existing +
                        "' exists, and Git can't have both; choose another "
-                       "task name\n");
+                       "task name\nNo branch or worktree was created.\n");
     CHECK(entries(box.work()) == std::vector<fs::path>{repo});
 }
 
@@ -332,7 +333,8 @@ TEST_CASE("wt new refuses a target path that already exists") {
     CHECK(r.err ==
           "wt: refused: cannot create the worktree: " + target.string() +
               " already exists; wt never reuses or overwrites it, so "
-              "move it away or choose another task name\n");
+              "move it away or choose another task name\nNo branch or worktree "
+              "was created.\n");
     CHECK_FALSE(fs::exists(target / ".git"));
     if (fs::is_regular_file(target / "data")) {
         CHECK(read_file(target / "data") == "keep me");
@@ -348,7 +350,8 @@ TEST_CASE("wt new refuses two tasks that share a folder") {
     auto r = run_wt(box, repo, {"new", "a-b"});
     CHECK(r.code == 2);
     CHECK(r.err == "wt: refused: " + first.string() +
-                       " is already the worktree for branch a/b\n");
+                       " is already the worktree for branch a/b\nNo branch or "
+                       "worktree was created.\n");
 }
 
 // Whether `dir` is on a case-insensitive filesystem, like macOS's default.
@@ -373,7 +376,8 @@ TEST_CASE("wt new names the branch a task differs from only in case") {
     CHECK(r.out.empty());
     CHECK(r.err ==
           "wt: error: task 'Fix' conflicts with existing branch 'fix' (names "
-          "differ only in case); choose another task name\n");
+          "differ only in case); choose another task name\nNo branch or "
+          "worktree was created.\n");
     CHECK(git_output(box, repo, {"branch", "--format=%(refname:short)"}) ==
           "fix\nmain");
 }
@@ -393,7 +397,8 @@ TEST_CASE("wt new refuses a packed branch that differs only in case") {
     CHECK(r.out.empty());
     CHECK(r.err ==
           "wt: error: task 'Fix' conflicts with existing branch 'fix' (names "
-          "differ only in case); choose another task name\n");
+          "differ only in case); choose another task name\nNo branch or "
+          "worktree was created.\n");
     CHECK(
         git_output(box, repo, {"show-ref", "--heads"}).find("refs/heads/Fix") ==
         std::string::npos);
@@ -443,7 +448,8 @@ TEST_CASE("wt new refuses a branch nested under a case variant") {
         CHECK(r.err == "wt: error: cannot create branch '" + c.task +
                            "' because branch '" + c.existing +
                            "' exists, and Git can't have both when case is "
-                           "ignored; choose another task name\n");
+                           "ignored; choose another task name\nNo branch or "
+                           "worktree was created.\n");
         CHECK(git_output(box, repo,
                          {"for-each-ref", "--format=%(refname:strip=2)",
                           "refs/heads/"}) == c.existing + "\nmain");
@@ -491,7 +497,8 @@ TEST_CASE("wt new names the folder a task differs from only in case") {
         CHECK(r.code == 2);
         CHECK(r.err == "wt: refused: " + first.string() +
                            " is already the worktree for branch a/fix (folder "
-                           "names differ only in case)\n");
+                           "names differ only in case)\nNo branch or worktree "
+                           "was created.\n");
     }
     SECTION("an unrelated directory") {
         const fs::path existing = first.parent_path() / "feature";
@@ -502,7 +509,8 @@ TEST_CASE("wt new names the folder a task differs from only in case") {
               "wt: refused: cannot create the worktree: " + existing.string() +
                   " already exists (folder names differ only in "
                   "case); wt never reuses or overwrites it, so move "
-                  "it away or choose another task name\n");
+                  "it away or choose another task name\nNo branch or worktree "
+                  "was created.\n");
     }
     CHECK(git_output(box, repo, {"branch", "--format=%(refname:short)"}) ==
           "a/fix\nmain");
@@ -519,7 +527,8 @@ TEST_CASE("wt new refuses a path Git still has registered") {
     auto r = run_wt(box, repo, {"new", "feature"});
     CHECK(r.code == 2);
     CHECK_THAT(r.err, ContainsSubstring("already has a worktree registered") &&
-                          EndsWith("`git worktree prune` forgets it\n"));
+                          EndsWith("`git worktree prune` forgets it\nNo branch "
+                                   "or worktree was created.\n"));
     CHECK_FALSE(fs::exists(target));
 }
 
@@ -532,9 +541,9 @@ TEST_CASE("wt new names the task to remove when its path is registered") {
 
     auto r = run_wt(box, repo, {"new", "a-b"});
     CHECK(r.code == 2);
-    CHECK_THAT(r.err,
-               EndsWith("although its directory is gone; "
-                        "`wt remove a/b --forget-missing` forgets it\n"));
+    CHECK_THAT(r.err, EndsWith("although its directory is gone; "
+                               "`wt remove a/b --forget-missing` forgets "
+                               "it\nNo branch or worktree was created.\n"));
 }
 
 TEST_CASE("wt new refuses a container it can't prove it owns") {
@@ -662,6 +671,26 @@ TEST_CASE("wt new fails when Git succeeds but the worktree isn't the task's") {
                        "`git branch` before removing anything\n");
     // Left as the hook made it, for the user to inspect.
     CHECK(git_output(box, target, {"branch", "--show-current"}) == "other");
+}
+
+TEST_CASE("wt new doesn't claim nothing was created when it can't check") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path target = expected_container(box, repo) / "feature";
+
+    auto r = run_wt(box, repo, {"new", "feature"},
+                    git_fails_after(box, " worktree add "));
+    CHECK(r.code == 4);
+    CHECK(r.out.empty());
+    CHECK_THAT(r.err, StartsWith("wt: git error: git worktree add reported "
+                                 "success, but wt could not check the "
+                                 "result: simulated failure\n"));
+    CHECK_THAT(r.err, ContainsSubstring("no cleanup was attempted; check the "
+                                        "branch and worktree with `wt list` "
+                                        "and `git branch`\n"));
+    CHECK_THAT(r.err, !ContainsSubstring("No branch or worktree was created"));
+    CHECK(registered(box, repo, target));
+    CHECK(git_output(box, target, {"branch", "--show-current"}) == "feature");
 }
 
 TEST_CASE("wt new fails when Git succeeds but the branch has moved") {

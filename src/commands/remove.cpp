@@ -9,6 +9,7 @@
 #include "ui/format.hpp"
 
 #include <algorithm>
+#include <exception>
 #include <filesystem>
 #include <optional>
 #include <ostream>
@@ -242,8 +243,7 @@ RemovalCheck check_removable(const Context& ctx,
     if (forget_missing && status.status != git::Status::missing) {
         throw Error(ErrorKind::refused,
                     worktree.path.string() +
-                        " is there, so --forget-missing doesn't apply; "
-                        "nothing was removed");
+                        " is there, so --forget-missing doesn't apply");
     }
     switch (status.status) {
         case git::Status::unknown:
@@ -286,19 +286,43 @@ int remove_worktree(const Context& ctx, const git::Worktree& worktree,
                     const RemovalCheck& check) {
     const std::string shown_path =
         ui::printable(ui::tilde_path(worktree.path, ctx.home));
-    // WARNING: never pass --force. Git's own check for modified and untracked
-    // files is the last line of defense if something changed since ours.
-    // "--" and the absolute path keep the path from being read as an option.
-    const git::Result result = git::run(
-        ctx.repo, {"worktree", "remove", "--", worktree.path.string()});
-    if (result.exit_code != 0) {
+    // WARNING: from here on Git may have removed something, so every failure
+    // is reported here, never thrown; callers rely on an error that escapes
+    // meaning nothing was removed.
+    std::string problem;
+    git::Result result{0, {}, {}};
+    try {
+        // WARNING: never pass --force. Git's own check for modified and
+        // untracked files is the last line of defense if something changed
+        // since ours. "--" and the absolute path keep the path from being
+        // read as an option.
+        result = git::run(ctx.repo,
+                          {"worktree", "remove", "--", worktree.path.string()});
+    } catch (const std::exception& e) {
+        problem = std::string(
+                      "wt could not tell whether git worktree remove "
+                      "finished: ") +
+                  e.what();
+    }
+    if (problem.empty() && result.exit_code != 0) {
         report_failure(ctx, result, worktree.path);
         return exit_code(ErrorKind::git);
     }
-    if (auto problem = removal_problem(ctx, worktree.path)) {
-        ctx.err << error_prefix(ErrorKind::git)
-                << "git worktree remove reported success, but "
-                << ui::printable(*problem) << " at " << shown_path << '\n'
+    if (problem.empty()) {
+        try {
+            if (auto found = removal_problem(ctx, worktree.path)) {
+                problem = *found;
+            }
+        } catch (const std::exception& e) {
+            problem = std::string("wt could not check the result: ") + e.what();
+        }
+        if (!problem.empty()) {
+            problem = "git worktree remove reported success, but " + problem;
+        }
+    }
+    if (!problem.empty()) {
+        ctx.err << error_prefix(ErrorKind::git) << ui::printable(problem)
+                << " (" << shown_path << ")\n"
                 << "wt: the result could not be verified; inspect it with "
                    "`wt list` before retrying\n";
         return exit_code(ErrorKind::git);
@@ -322,6 +346,7 @@ int remove_command(const Context& ctx, const std::string& task,
         check_removable(ctx, worktrees, worktree, task, delete_ignored,
                         forget_missing, "wt remove");
     if (!check.allowed) {
+        ctx.err << "Nothing was removed.\n";
         return exit_code(ErrorKind::refused);
     }
     if (const int code = remove_worktree(ctx, worktree, check); code != 0) {

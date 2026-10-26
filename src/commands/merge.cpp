@@ -50,7 +50,8 @@ void report_behind(const Context& ctx, const std::string& task,
             << shown_base << " to " << shown_task << "\n\n"
             << shown_task << " is " << behind
             << (behind == 1 ? " commit" : " commits") << " behind "
-            << shown_base << ", and merge.ff is set to \"only\".\n";
+            << shown_base << ", and merge.ff is set to \"only\".\n"
+            << "Nothing was merged.\n";
     if (source != nullptr) {
         ctx.err << "Rebase it onto " << shown_base
                 << " in its worktree, resolving any conflicts there:\n\n"
@@ -88,8 +89,8 @@ void check_destination(const git::Worktree& dest, const std::string& base) {
     // The worktree was found from a listing taken earlier; merging there if
     // someone has since switched it would land the task on another branch.
     if (git::head_branch(dest.path) != "refs/heads/" + base) {
-        throw Error(ErrorKind::refused, where + " no longer has " + base +
-                                            " checked out; nothing was merged");
+        throw Error(ErrorKind::refused,
+                    where + " no longer has " + base + " checked out");
     }
     // Checked before the changes because an interrupted merge leaves both,
     // and Git won't commit or stash while conflicts are unresolved.
@@ -239,13 +240,13 @@ std::optional<std::string> abort_merge(const git::Worktree& dest,
         if (auto problem = position_problem(dest, base, before)) {
             return problem;
         }
+        const auto status = git::worktree_status(dest);
+        if (status.status != git::Status::clean) {
+            return "the worktree is " +
+                   std::string(git::status_label(status.status));
+        }
     } catch (const std::exception& e) {
         return std::string("cannot verify the abort: ") + e.what();
-    }
-    const auto status = git::worktree_status(dest);
-    if (status.status != git::Status::clean) {
-        return "the worktree is " +
-               std::string(git::status_label(status.status));
     }
     return std::nullopt;
 }
@@ -317,22 +318,40 @@ void report_unrestored(const Context& ctx, const std::string& headline,
             << " status`.\n";
 }
 
-// Explains, on stderr, why the task's worktree and branch are still there
-// after it landed, and how to finish. Rerunning is safe: the task has landed,
-// so `wt merge` finds nothing to merge and goes straight to the cleanup.
+// Explains, on stderr, what is left of `task` after it landed in `base` but
+// the cleanup failed, and how to finish. Reads the current state rather than
+// trusting what the failed step reported, which may not know. Rerunning is
+// safe: the task has landed, so `wt merge` finds nothing to merge and goes
+// straight to the cleanup.
 void report_unfinished(const Context& ctx, const std::string& task,
-                       const std::string& base, bool worktree_removed,
-                       bool delete_ignored) {
+                       const std::string& base, bool delete_ignored) {
     const std::string shown_task = ui::printable(task);
-    ctx.err << '\n'
-            << shown_task << " has landed in " << ui::printable(base)
-            << ", but the cleanup didn't finish:\n";
-    if (worktree_removed) {
-        ctx.err << "- its worktree was removed\n";
-    } else {
-        ctx.err << "- its worktree is still there (`wt list` shows it)\n";
+    ctx.err << '\n' << shown_task << " has landed in " << ui::printable(base);
+    bool has_worktree = false;
+    bool has_branch = false;
+    try {
+        has_worktree = find_branch_worktree(git::list_worktrees(ctx.repo),
+                                            task) != nullptr;
+        has_branch = git::ref_exists(ctx.repo, "refs/heads/" + task);
+    } catch (const std::exception& e) {
+        ctx.err << ", but the cleanup didn't finish, and wt could not check "
+                   "what is left: "
+                << ui::printable(e.what()) << '\n'
+                << "Check it with `wt list` and `git branch` before "
+                   "retrying.\n";
+        return;
     }
-    ctx.err << "- its branch " << shown_task << " was kept\n"
+    // No worktree can have a branch checked out that doesn't exist.
+    if (!has_branch) {
+        ctx.err << "; its worktree and branch are gone, so nothing is left "
+                   "to clean up.\n";
+        return;
+    }
+    ctx.err << ", but the cleanup didn't finish:\n"
+            << (has_worktree ? "- its worktree is still there (`wt list` "
+                               "shows it)\n"
+                             : "- it has no worktree\n")
+            << "- its branch " << shown_task << " was kept\n"
             << "\nOnce that's dealt with, finish the cleanup with:\n\n"
             << "  wt merge " << ui::printable(ui::shell_quote(task))
             << " --cleanup" << (delete_ignored ? " --delete-ignored" : "")
@@ -383,8 +402,7 @@ bool check_cleanup(const Context& ctx,
                         " doesn't, so Git wouldn't delete the branch once it "
                         "lands; update the upstream or unset it (`git branch "
                         "--unset-upstream " +
-                        ui::shell_quote(task) +
-                        "`), then rerun; nothing was merged");
+                        ui::shell_quote(task) + "`), then rerun");
     }
     return true;
 }
@@ -456,7 +474,6 @@ int delete_branch(const Context& ctx, const std::string& task,
 // Each step rechecks what it depends on first. Never touches remote branches.
 int clean_up(const Context& ctx, const std::string& task,
              const std::string& base, bool delete_ignored) {
-    bool worktree_removed = false;
     try {
         const auto worktrees = git::list_worktrees(ctx.repo);
         if (const auto* source = find_branch_worktree(worktrees, task)) {
@@ -466,31 +483,29 @@ int clean_up(const Context& ctx, const std::string& task,
                 check_removable(ctx, worktrees, *source, task, delete_ignored,
                                 /*forget_missing=*/false, "wt merge");
             if (!check.allowed) {
-                report_unfinished(ctx, task, base, false, delete_ignored);
+                report_unfinished(ctx, task, base, delete_ignored);
                 return exit_code(ErrorKind::refused);
             }
             if (const int code = remove_worktree(ctx, *source, check);
                 code != 0) {
-                report_unfinished(ctx, task, base, false, delete_ignored);
+                report_unfinished(ctx, task, base, delete_ignored);
                 return code;
             }
-            worktree_removed = true;
         }
         if (const int code = delete_branch(ctx, task, base); code != 0) {
-            report_unfinished(ctx, task, base, worktree_removed,
-                              delete_ignored);
+            report_unfinished(ctx, task, base, delete_ignored);
             return code;
         }
         return 0;
     } catch (const Error& e) {
         ctx.err << error_prefix(e.kind()) << ui::printable(e.what()) << '\n';
-        report_unfinished(ctx, task, base, worktree_removed, delete_ignored);
+        report_unfinished(ctx, task, base, delete_ignored);
         return exit_code(e.kind());
     } catch (const std::exception& e) {
         // Reported as app.cpp would, but with what is left behind.
         ctx.err << error_prefix(ErrorKind::internal) << ui::printable(e.what())
                 << '\n';
-        report_unfinished(ctx, task, base, worktree_removed, delete_ignored);
+        report_unfinished(ctx, task, base, delete_ignored);
         return exit_code(ErrorKind::internal);
     }
 }
@@ -539,22 +554,40 @@ int land(const Context& ctx, const std::string& task, const std::string& base,
         for (const auto& path : in_the_way) {
             ctx.err << "- " << ui::printable(path) << '\n';
         }
-        ctx.err << "\nMove them out of the way first.\n";
+        ctx.err << "\nNothing was merged.\nMove them out of the way first.\n";
         return exit_code(ErrorKind::refused);
     }
 
     // The full ref can't be mistaken for a tag of the same name; the message
     // keeps Git from naming the commit after it ("Merge branch
     // 'refs/heads/x'"). --no-edit because no one is there to edit it.
-    const git::Result result =
-        git::run(dest.path, {"merge", "--no-edit", "-m",
-                             "Merge branch '" + task + "' into " + base,
-                             "refs/heads/" + task});
+    // WARNING: from here on Git may have changed `base`, so every failure is
+    // reported here with what is known, never thrown; an error that escapes
+    // wt merge means nothing was merged.
+    git::Result result{0, {}, {}};
+    try {
+        result =
+            git::run(dest.path, {"merge", "--no-edit", "-m",
+                                 "Merge branch '" + task + "' into " + base,
+                                 "refs/heads/" + task});
+    } catch (const std::exception& e) {
+        report_unrestored(
+            ctx,
+            std::string("wt could not tell whether git merge finished: ") +
+                e.what(),
+            result, {}, dest, base);
+        return exit_code(ErrorKind::git);
+    }
     if (result.exit_code == 0) {
         // Nothing is undone here: the merge did happen, and guessing what
         // else changed could lose more than it fixes.
-        if (auto problem =
-                merge_problem(dest, base, task, *task_commit, *before)) {
+        std::optional<std::string> problem;
+        try {
+            problem = merge_problem(dest, base, task, *task_commit, *before);
+        } catch (const std::exception& e) {
+            problem = std::string("wt could not check the result: ") + e.what();
+        }
+        if (problem) {
             ctx.err << error_prefix(ErrorKind::git)
                     << "git merge reported success, but "
                     << ui::printable(*problem) << '\n';
@@ -589,7 +622,14 @@ int land(const Context& ctx, const std::string& task, const std::string& base,
                 << "git merge failed with exit code " << result.exit_code
                 << '\n';
         print_git_output(ctx, result);
-        if (auto problem = position_problem(dest, base, *before)) {
+        std::optional<std::string> problem;
+        try {
+            problem = position_problem(dest, base, *before);
+        } catch (const std::exception& e) {
+            problem =
+                "wt could not confirm " + base + " is unchanged: " + e.what();
+        }
+        if (problem) {
             ctx.err << '\n'
                     << ui::printable(*problem) << "; inspect " << shown_base
                     << "'s worktree with `git -C "

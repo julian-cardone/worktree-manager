@@ -250,6 +250,21 @@ inline Env git_shim(const Sandbox& box, const std::string& prelude) {
     return {{"PATH", bin.string() + ":" + (path_env ? path_env : "")}};
 }
 
+// Environment in which the first git command wt runs with `trigger` among
+// its arguments (e.g. " worktree remove ") runs normally, and every one after
+// it fails with "fatal: simulated failure". Stands in for anything that stops
+// wt from checking what a change did, once the change is made.
+inline Env git_fails_after(const Sandbox& box, const std::string& trigger) {
+    const std::string done = (box.root() / "git-failing").string();
+    return git_shim(box, "if [ -e '" + done +
+                             "' ]; then echo 'fatal: simulated failure' >&2; "
+                             "exit 128; fi\n"
+                             "case \" $* \" in *'" +
+                             trigger +
+                             "'*) \"$REAL_GIT\" \"$@\"; rc=$?; : > '" + done +
+                             "'; exit $rc;; esac\n");
+}
+
 inline void commit_file(const Sandbox& box, const fs::path& dir,
                         const std::string& name, const std::string& content) {
     write_file(dir / name, content);

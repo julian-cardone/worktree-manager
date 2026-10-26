@@ -78,6 +78,10 @@ The Git commands `wt` runs on a particular worktree ignore `GIT_DIR`, `GIT_WORK_
 
 When a command doesn't do what was asked, the first line on stderr and the exit code say why, so people and agents can tell a deliberate refusal from something that broke.
 Scripts should treat any nonzero exit code as failure, and branch on a specific code only when they deliberately handle that category.
+
+The message also says whether anything was changed.
+When `wt new`, `wt remove`, or `wt merge` stops before changing anything, its last line says so (`No branch or worktree was created.`, `Nothing was removed.`, `Nothing was merged.`).
+Once a command has started changing things, it never says that; it reports what it changed or left behind, or that it couldn't verify the result and where to look.
 Earlier builds exited 1 for every failure; the categories were introduced as a deliberate breaking change while `wt` is in early development.
 
 
@@ -278,6 +282,7 @@ $ wt merge feature-x
 wt: refused: cannot fast-forward main to feature-x
 
 feature-x is 2 commits behind main, and merge.ff is set to "only".
+Nothing was merged.
 Rebase it onto main in its worktree, resolving any conflicts there:
 
   git -C /Users/me/Dev/.worktree-manager.wt-a13f92c4/feature-x rebase main
@@ -321,7 +326,7 @@ Remote branches, such as `origin/<task>`, are never touched.
 That also deletes branches whose worktrees were removed earlier with `wt remove`.
 `--cleanup` never forgets a worktree whose directory is missing; run `wt remove <task> --forget-missing` first, then rerun it.
 
-**If the cleanup fails after landing**, the merge stays, and `wt` says what was left and how to finish:
+**If the cleanup fails after landing**, the merge stays, and `wt` reads what is left from Git and says how to finish:
 
 ```
 $ wt merge feature-x --cleanup
@@ -374,6 +379,7 @@ wt: refused: cannot remove feature-x
 
 Commit or delete the untracked files, or stash them with `git stash -u`.
 Ignored files are deleted with the worktree; move any you need, then rerun with --delete-ignored.
+Nothing was removed.
 ```
 
 Counts follow `git status`: an untracked or ignored directory counts once.
@@ -402,6 +408,7 @@ wt: refused: nothing is at /Users/me/Dev/.worktree-manager.wt-a13f92c4/feature-x
 It may have been moved, or be on a drive that isn't mounted.
 If it was moved, `git worktree repair <new-path>` reconnects it.
 If it's gone for good, `wt remove feature-x --forget-missing` removes only Git's record of it and keeps the branch.
+Nothing was removed.
 ```
 
 `--forget-missing` removes only Git's record of the worktree, which also holds its index and any in-progress operation state, and keeps the branch.

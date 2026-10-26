@@ -19,12 +19,18 @@ namespace wt {
 
 namespace {
 
-int report_error(const Context& ctx, ErrorKind kind, const char* message) {
+// `unchanged`, if set, says that the command changed nothing, e.g. "Nothing
+// was removed."
+int report_error(const Context& ctx, ErrorKind kind, const char* message,
+                 const char* unchanged) {
     // Messages can quote branch names and paths, so sanitize them.
     ctx.err << error_prefix(kind) << ui::printable(message) << '\n';
     if (kind == ErrorKind::internal) {
+        // wt doesn't understand what happened, so it claims nothing.
         ctx.err << "wt: this is probably a bug in wt; check the state of the "
                    "affected worktrees with `git status` before retrying\n";
+    } else if (unchanged != nullptr) {
+        ctx.err << unchanged << '\n';
     }
     return exit_code(kind);
 }
@@ -93,6 +99,11 @@ int run(int argc, const char* const* argv, const Context& invoked) {
         return 0;
     }
 
+    // What a command that changes things says when an error escapes it.
+    // WARNING: true only because those commands report every failure from
+    // their first mutation on themselves, with what is known about the
+    // result, and never let it escape. Keep it so when adding a mutation.
+    const char* unchanged = nullptr;
     try {
         app->parse(argc, argv);
         Context ctx = invoked;
@@ -101,15 +112,18 @@ int run(int argc, const char* const* argv, const Context& invoked) {
             return list_command(ctx);
         }
         if (auto* sub = app->get_subcommand("new"); sub->parsed()) {
+            unchanged = "No branch or worktree was created.";
             return new_command(ctx, sub->get_option("task")->as<std::string>());
         }
         if (auto* sub = app->get_subcommand("remove"); sub->parsed()) {
+            unchanged = "Nothing was removed.";
             return remove_command(
                 ctx, sub->get_option("task")->as<std::string>(),
                 sub->get_option("--delete-ignored")->as<bool>(),
                 sub->get_option("--forget-missing")->as<bool>());
         }
         if (auto* sub = app->get_subcommand("merge"); sub->parsed()) {
+            unchanged = "Nothing was merged.";
             return merge_command(
                 ctx, sub->get_option("task")->as<std::string>(),
                 sub->get_option("--cleanup")->as<bool>(),
@@ -123,11 +137,11 @@ int run(int argc, const char* const* argv, const Context& invoked) {
         return app->exit(e, invoked.out, invoked.err);
     } catch (const Error& e) {
         // Commands report most failures by throwing.
-        return report_error(invoked, e.kind(), e.what());
+        return report_error(invoked, e.kind(), e.what(), unchanged);
     } catch (const std::exception& e) {
         // Anything else wasn't anticipated, e.g. a failing system call; say
         // so rather than abort with no useful message.
-        return report_error(invoked, ErrorKind::internal, e.what());
+        return report_error(invoked, ErrorKind::internal, e.what(), nullptr);
     }
     return 0;
 }
