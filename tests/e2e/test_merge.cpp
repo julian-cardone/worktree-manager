@@ -355,6 +355,28 @@ TEST_CASE("wt merge fails when Git succeeds but main lacks the task") {
     CHECK(head_of(box, repo) == before);
 }
 
+TEST_CASE("wt merge fails when Git succeeds but main loses its own commits") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature");
+    commit_file(box, path, "a.txt", "a\n");
+    commit_file(box, repo, "m.txt", "m\n");
+    const std::string before = head_of(box, repo);
+    // main contains the task afterwards, but no longer its own commit.
+    const fs::path hook = repo / ".git" / "hooks" / "post-merge";
+    write_file(hook, "#!/bin/sh\ngit reset -q --hard refs/heads/feature\n");
+    fs::permissions(hook, fs::perms::owner_all);
+
+    auto r = run_wt(box, repo, {"merge", "feature"});
+    CHECK(r.code == 4);
+    CHECK(r.out.empty());
+    CHECK_THAT(r.err, StartsWith("wt: git error: git merge reported success, "
+                                 "but main no longer contains " +
+                                 before.substr(0, 7) +
+                                 ", where it was before the merge\n"));
+    CHECK(head_of(box, repo) == head_of(box, path));
+}
+
 TEST_CASE("wt merge fails when Git succeeds but leaves main's worktree dirty") {
     Sandbox box;
     const fs::path repo = make_repo(box, box.work() / "repo");

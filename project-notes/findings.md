@@ -112,6 +112,7 @@ Hooks run after Git has done its work and can undo or change it without Git fail
 `wt` used to report success on exit code 0 alone, so `wt merge` printed "✓ Merged" for a task `main` didn't contain, and `wt new` printed the path of a worktree on the wrong branch.
 `wt new`, `wt merge`, and `wt remove` now confirm the result from Git's and the filesystem's current state before reporting success (see `AGENTS.md` section 3).
 Matching HEAD's commit isn't enough: a hook can point HEAD at another branch, or detach it, at the same commit, so `wt merge` also checks the integration branch's worktree still has that branch checked out, after a successful merge and before calling a failed one undone.
+Containing the task isn't enough either: a hook can reset the integration branch to the task's tip, dropping its own commits, so `wt merge` also checks it still contains its pre-merge commit.
 
 ### A failed `wt new` can't tell what it created from what was already there
 

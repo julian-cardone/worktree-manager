@@ -245,18 +245,25 @@ std::optional<std::string> abort_merge(const git::Worktree& dest,
     return std::nullopt;
 }
 
-// Checks, after Git reports a successful merge, that `base` now contains
-// `task_commit` and its worktree is clean and on it. Git's exit code alone
-// doesn't prove that: a post-merge hook, for one, runs after the merge and
-// can undo or add to it. Returns what is wrong, if anything.
+// Checks, after Git reports a successful merge, that `base` now contains both
+// `task_commit` and `before`, its own commit before the merge, and that its
+// worktree is clean and on it. Git's exit code alone doesn't prove that: a
+// post-merge hook, for one, runs after the merge and can undo or add to it,
+// or reset `base` to the task and drop its own commits. Returns what is wrong,
+// if anything.
 // WARNING: wt reports a merge only once this passes.
 std::optional<std::string> merge_problem(const git::Worktree& dest,
                                          const std::string& base,
                                          const std::string& task,
-                                         const std::string& task_commit) {
+                                         const std::string& task_commit,
+                                         const std::string& before) {
     const auto tip = git::resolve_commit(dest.path, "refs/heads/" + base);
     if (!tip || !git::is_ancestor(dest.path, task_commit, *tip)) {
         return base + " doesn't contain " + task;
+    }
+    if (!git::is_ancestor(dest.path, before, *tip)) {
+        return base + " no longer contains " + before.substr(0, 7) +
+               ", where it was before the merge";
     }
     if (auto problem = position_problem(dest, base, *tip)) {
         return problem;
@@ -541,7 +548,8 @@ int land(const Context& ctx, const std::string& task, const std::string& base,
     if (result.exit_code == 0) {
         // Nothing is undone here: the merge did happen, and guessing what
         // else changed could lose more than it fixes.
-        if (auto problem = merge_problem(dest, base, task, *task_commit)) {
+        if (auto problem =
+                merge_problem(dest, base, task, *task_commit, *before)) {
             ctx.err << error_prefix(ErrorKind::git)
                     << "git merge reported success, but "
                     << ui::printable(*problem) << '\n';
