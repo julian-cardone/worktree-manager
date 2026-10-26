@@ -77,8 +77,7 @@ All development on this repository must exercise `wt` as the intended worktree w
 - Use `git restore` for file-level restoration and conflict resolution; do not use `git checkout`.
 - If `wt` is broken, unsafe, or lacks a required lifecycle capability, stop and report the limitation instead of bypassing it. Keep the missing-capabilities section of `project-notes/wt-usage.md` current as gaps are found or resolved.
 - Friction in general Git workflows is not by itself a reason to add a `wt` command. Only propose new `wt` commands that fit the product boundary above.
-- Record meaningful `wt` friction in `project-notes/wt-usage.md`.
-- When a rebase produces conflicts, record one concise entry in `project-notes/wt-usage.md` naming the task and conflicted files. Do not log conflict-free rebases.
+- Record concise, non-routine friction in `project-notes/wt-usage.md`, including actual rebase conflicts, repeated manual workarounds, recurring cleanup steps, and workflow interruptions. For rebase conflicts, name the task and conflicted files. Do not log conflict-free rebases or routine successful commands.
 - Record significant product, architecture, safety, reliability, performance, or usability findings in `project-notes/findings.md`, and surface important findings when discovered.
 - Do not log routine successful commands or generate unnecessary noise.
 
