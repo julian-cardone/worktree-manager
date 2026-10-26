@@ -102,6 +102,37 @@ GitHub Actions (`.github/workflows/ci.yml`) runs the commands above on every pus
 It configures, builds, and runs the full test suite on Linux and macOS, and checks formatting with clang-format 23.
 The tests need no Git setup on the runner, since they never read its Git config.
 
+## Releasing
+
+The version has one source: `project(wt VERSION ...)` in `CMakeLists.txt`, which `wt --version` reports.
+
+To release, land a commit that sets the new version on `main`, then tag that commit and push the tag:
+
+```sh
+git tag -a v0.1.0 -m "wt 0.1.0"
+git push origin v0.1.0
+```
+
+Pushing a tag of the form `vX.Y.Z` runs `.github/workflows/release.yml`, which publishes a GitHub Release only if:
+
+- the tagged commit is on `main`;
+- the Release build passes the full test suite on Linux and macOS;
+- the built binary reports exactly the tagged version;
+- no release for the tag exists yet; an existing one is never modified.
+
+The release attaches one archive per platform, named `wt-<version>-<os>-<arch>.tar.gz` (e.g. `wt-0.1.0-macos-arm64.tar.gz`), and a `SHA256SUMS` file.
+Each archive contains only `wt-<version>-<os>-<arch>/bin/wt`, so `tar -xzf <archive> --strip-components=1 -C "$HOME/.local"` installs it as `~/.local/bin/wt`.
+The archives are built on the same Ubuntu 24.04 (x86_64) and macOS 15 (arm64) runners as CI.
+
+The workflow builds each archive with a script you can also run locally:
+
+```sh
+scripts/package-release.sh     # configure, build, and test in build-release/, then package
+```
+
+It prints the archive's path, e.g. `build-release/wt-0.1.0-macos-arm64.tar.gz`.
+`build-release/` is for packaging only; install from your usual build directory instead, since packaging removes `build-release/install_manifest.txt`.
+
 ## Usage
 
 | Command | Description |
@@ -539,6 +570,7 @@ After Git reports success, `wt remove` checks that Git no longer lists the workt
 ```
 CMakeLists.txt        # top-level build; produces build/wt
 cmake/                # install-time and uninstall scripts used by the build
+scripts/              # release packaging script
 src/
   main.cpp            # entry point; delegates to wt::run
   error.hpp           # wt::Error and its kinds, exit codes, and message prefixes
@@ -551,5 +583,5 @@ tests/
   e2e/                # Catch2 tests that drive the built binary
   install/            # CMake script testing install and uninstall
   support/            # shared test helpers (e.g. the temp-directory sandbox)
-.github/workflows/    # CI: build, test, and format check
+.github/workflows/    # CI (build, test, format check) and tag-triggered releases
 ```

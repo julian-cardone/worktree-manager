@@ -1,0 +1,102 @@
+# Publishes a GitHub Release when a version tag (e.g. v0.1.0) is pushed.
+# Nothing is published unless every platform builds, passes the full test
+# suite, and reports exactly the tagged version. See "Releasing" in README.md.
+name: Release
+
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check-tag:
+    name: Check tag
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # Releases are cut only from commits that already landed on main.
+      - name: Check the tagged commit is on main
+        run: |
+          commit=$(git rev-parse "$GITHUB_REF^{commit}")
+          if ! git merge-base --is-ancestor "$commit" origin/main; then
+            echo "::error::$GITHUB_REF_NAME points at $commit, which is not on main; nothing was published."
+            exit 1
+          fi
+
+  package:
+    name: Package (${{ matrix.os }})
+    needs: check-tag
+    strategy:
+      matrix:
+        # The platforms CI tests; wt is POSIX-only.
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Show toolchain
+        run: |
+          cmake --version
+          c++ --version
+          git --version
+
+      - name: Build, test, and package
+        run: scripts/package-release.sh build-release
+
+      # The version lives only in CMakeLists.txt; the tag must agree with it.
+      - name: Check the binary reports the tagged version
+        run: |
+          actual=$(build-release/wt --version)
+          expected="wt ${GITHUB_REF_NAME#v}"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME expects '$expected' but the binary reports '$actual'; nothing was published."
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: package-${{ matrix.os }}
+          path: build-release/wt-*.tar.gz
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs: package
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: package-*
+          path: dist
+          merge-multiple: true
+
+      - name: Write checksums
+        working-directory: dist
+        run: sha256sum wt-*.tar.gz > SHA256SUMS
+
+      # gh creates the release as a draft and publishes it only once every
+      # asset has uploaded, so a failure leaves a draft, never a public
+      # release with missing assets. An existing release (draft or not) for
+      # the tag is never modified.
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            echo "::error::A release for $GITHUB_REF_NAME already exists; inspect or delete it, then rerun this workflow. Nothing was changed."
+            exit 1
+          fi
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --verify-tag --generate-notes --title "wt ${GITHUB_REF_NAME#v}"
