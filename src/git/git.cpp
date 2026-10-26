@@ -211,6 +211,13 @@ Result run(const std::filesystem::path& dir,
     return result;
 }
 
+std::string single_value(std::string_view out) {
+    if (out.ends_with('\n')) {
+        out.remove_suffix(1);
+    }
+    return std::string(out);
+}
+
 std::string error_message(std::string_view git_stderr) {
     std::string_view msg = git_stderr;
     while (!msg.empty() && (msg.front() == '\n' || msg.front() == ' ')) {

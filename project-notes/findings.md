@@ -58,6 +58,12 @@ Git exports `GIT_DIR`, `GIT_WORK_TREE`, and `GIT_INDEX_FILE` to hooks, `git reba
 `git::run` now drops Git's per-repository variables (`git rev-parse --local-env-vars`, minus the config ones) before running Git.
 An explicit `GIT_DIR` is still honored when choosing the repository, and `wt` refuses when it disagrees with the current directory.
 
+### Newline-separated Git output misreads paths that contain newlines
+
+`operation_in_progress` asked `git rev-parse` for all its state paths at once and split the answer on newlines.
+Under a repository path containing a newline, the paths no longer lined up, so `wt remove` deleted a worktree in the middle of a bisect.
+Values from Git commands are now read with `-z` where Git offers it, and otherwise one per command (`git::single_value`), never as a first line.
+
 ### Git rewrites the Unicode in paths it is given on macOS
 
 With `core.precomposeunicode` (the macOS default), Git stores the path passed to `git worktree add` with its Unicode precomposed (NFC), while the filesystem keeps the name as created, and the main worktree's path comes back with the on-disk bytes.

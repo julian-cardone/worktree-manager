@@ -56,6 +56,7 @@ These must always hold. Review every command, new or changed, against each of th
 ### Practices
 
 - Validate and sanitize paths, branch names, command arguments, and other external inputs.
+- Read Git through machine-oriented interfaces: porcelain formats, `-z`, `--format`, and exit codes. Never parse output meant for humans, including error messages, which are translated. Query one path per command when Git has no `-z`, since paths can contain newlines.
 - Consider edge cases, partial failures, interrupted operations, and concurrent processes.
 - Use retries only when appropriate; do not mask persistent failures.
 - Add a `WARNING:` comment at checks that uphold a safety invariant so they are not relaxed accidentally.

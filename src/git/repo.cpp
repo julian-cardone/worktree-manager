@@ -18,10 +18,6 @@ namespace {
 // is a real failure that shouldn't be mistaken for an answer.
 constexpr int kNotFound = 1;
 
-std::string first_line(const std::string& out) {
-    return out.substr(0, out.find('\n'));
-}
-
 bool local_branch_exists(const fs::path& dir, const std::string& name) {
     return ref_exists(dir, "refs/heads/" + name);
 }
@@ -44,20 +40,22 @@ fs::path invoked_repository(const fs::path& cwd,
     // override the -C that aims checks at a particular worktree. This is the
     // one place it is read: --git-dir, which Git resolves against -C just as
     // it resolves GIT_DIR against the current directory.
-    const Result named =
-        run(cwd, {"--git-dir=" + *git_dir, "rev-parse",
-                  "--path-format=absolute", "--git-dir", "--git-common-dir"});
-    const auto newline = named.out.find('\n');
-    if (named.exit_code != 0 || newline == std::string::npos) {
-        throw wt::Error(
-            ErrorKind::user,
-            "GIT_DIR is set to '" + *git_dir +
-                "', which isn't a Git directory: " + error_message(named.err) +
-                "; unset GIT_DIR or point it at one");
-    }
-    const fs::path named_dir = canonical_path(named.out.substr(0, newline));
-    const fs::path named_common =
-        canonical_path(first_line(named.out.substr(newline + 1)));
+    // One query per path: rev-parse separates the values it prints with
+    // newlines, which a path can contain.
+    auto named_path = [&](const std::string& query) {
+        const Result r = run(cwd, {"--git-dir=" + *git_dir, "rev-parse",
+                                   "--path-format=absolute", query});
+        if (r.exit_code != 0) {
+            throw wt::Error(
+                ErrorKind::user,
+                "GIT_DIR is set to '" + *git_dir +
+                    "', which isn't a Git directory: " + error_message(r.err) +
+                    "; unset GIT_DIR or point it at one");
+        }
+        return canonical_path(single_value(r.out));
+    };
+    const fs::path named_dir = named_path("--git-dir");
+    const fs::path named_common = named_path("--git-common-dir");
 
     const Result here =
         run(cwd, {"rev-parse", "--path-format=absolute", "--git-dir"});
@@ -69,7 +67,7 @@ fs::path invoked_repository(const fs::path& cwd,
     // WARNING: Unknown state means stop. GIT_DIR naming another repository,
     // or another worktree of this one, leaves it unclear what the user means;
     // picking either could aim a mutation at the wrong worktree.
-    const fs::path here_dir = canonical_path(first_line(here.out));
+    const fs::path here_dir = canonical_path(single_value(here.out));
     if (here_dir != named_dir) {
         throw wt::Error(ErrorKind::refused,
                         "GIT_DIR points at " + named_dir.string() +
@@ -87,7 +85,7 @@ fs::path common_dir(const fs::path& dir) {
     if (r.exit_code != 0) {
         throw Error(error_message(r.err));
     }
-    return canonical_path(first_line(r.out));
+    return canonical_path(single_value(r.out));
 }
 
 bool ref_exists(const fs::path& dir, std::string_view ref) {
@@ -117,7 +115,7 @@ std::optional<std::string> conflicting_branch(const fs::path& dir,
     if (r.exit_code != 0) {
         throw Error(error_message(r.err));
     }
-    const std::string nested = first_line(r.out);
+    const std::string nested = single_value(r.out);
     if (nested.empty()) {
         return std::nullopt;
     }
@@ -152,7 +150,7 @@ bool ignores_case(const fs::path& dir) {
     if (r.exit_code != 0) {
         throw Error(error_message(r.err));
     }
-    return first_line(r.out) == "true";
+    return single_value(r.out) == "true";
 }
 
 std::optional<std::string> resolve_commit(const fs::path& dir,
@@ -165,7 +163,7 @@ std::optional<std::string> resolve_commit(const fs::path& dir,
     if (r.exit_code != 0) {
         throw Error(error_message(r.err));
     }
-    return first_line(r.out);
+    return single_value(r.out);
 }
 
 std::optional<std::string> head_branch(const fs::path& dir) {
@@ -176,7 +174,7 @@ std::optional<std::string> head_branch(const fs::path& dir) {
     if (r.exit_code != 0) {
         throw Error(error_message(r.err));
     }
-    return first_line(r.out);
+    return single_value(r.out);
 }
 
 bool is_ancestor(const fs::path& dir, std::string_view ancestor,
@@ -202,7 +200,7 @@ bool is_valid_branch_name(const fs::path& dir, std::string_view name) {
         run(dir, {"check-ref-format", "--branch", std::string(name)});
     // --branch expands shorthands like @{-1}; only accept names that are
     // already literal.
-    return r.exit_code == 0 && first_line(r.out) == name;
+    return r.exit_code == 0 && single_value(r.out) == name;
 }
 
 std::string commit_summary(const fs::path& dir, std::string_view commit) {
@@ -212,7 +210,7 @@ std::string commit_summary(const fs::path& dir, std::string_view commit) {
     if (r.exit_code != 0) {
         throw Error(error_message(r.err));
     }
-    return first_line(r.out);
+    return single_value(r.out);
 }
 
 Divergence divergence(const fs::path& dir, std::string_view ref,
@@ -244,7 +242,7 @@ Divergence divergence(const fs::path& dir, std::string_view ref,
 std::string integration_branch(const fs::path& dir) {
     const Result config = run(dir, {"config", "--get", "wt.integrationBranch"});
     if (config.exit_code == 0) {
-        const std::string name = first_line(config.out);
+        const std::string name = single_value(config.out);
         if (!is_valid_branch_name(dir, name) ||
             !local_branch_exists(dir, name)) {
             throw wt::Error(
@@ -262,7 +260,7 @@ std::string integration_branch(const fs::path& dir) {
         run(dir, {"symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"});
     if (origin.exit_code == 0) {
         constexpr std::string_view kPrefix = "refs/remotes/origin/";
-        const std::string target = first_line(origin.out);
+        const std::string target = single_value(origin.out);
         if (!target.starts_with(kPrefix)) {
             throw wt::Error(ErrorKind::user, "origin/HEAD points to " + target +
                                                  ", not a branch of origin");

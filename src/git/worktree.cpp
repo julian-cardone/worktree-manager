@@ -6,7 +6,6 @@
 #include <algorithm>
 #include <fstream>
 #include <iterator>
-#include <sstream>
 #include <system_error>
 #include <utility>
 
@@ -129,8 +128,11 @@ Changes parse_status(std::string_view porcelain) {
 std::vector<Worktree> list_worktrees(const fs::path& dir) {
     // -z keeps paths containing newlines from corrupting the output.
     const Result r = run(dir, {"worktree", "list", "--porcelain", "-z"});
+    constexpr int kUsageError = 129;
     if (r.exit_code != 0) {
-        if (r.err.find("unknown switch") != std::string::npos) {
+        // Git exits 129 for options it doesn't know, here -z (added in 2.36);
+        // its message is translated, so it can't be matched reliably.
+        if (r.exit_code == kUsageError) {
             throw wt::Error(ErrorKind::user, "wt requires Git 2.36 or newer");
         }
         throw Error(error_message(r.err));
@@ -342,26 +344,18 @@ std::optional<std::string> operation_in_progress(const fs::path& dir) {
         {"rebase-apply", "a rebase"}, {"sequencer", "a cherry-pick or revert"},
         {"BISECT_LOG", "a bisect"},
     };
-    std::vector<std::string> args = {"rev-parse"};
     for (const auto& [path, what] : kStates) {
-        args.insert(args.end(), {"--git-path", path});
-    }
-    const Result r = run(dir, args);
-    if (r.exit_code != 0) {
-        throw wt::Error(
-            ErrorKind::refused,
-            "cannot check whether " + dir.string() +
-                " is in the middle of an operation: " + error_message(r.err));
-    }
-    std::istringstream lines(r.out);
-    for (const auto& [path, what] : kStates) {
-        std::string line;
-        if (!std::getline(lines, line)) {
-            throw wt::Error(ErrorKind::internal,
-                            "unexpected output from git rev-parse --git-path");
+        // One path per query: rev-parse separates the paths it prints with
+        // newlines, which the repository's path can contain.
+        const Result r = run(dir, {"rev-parse", "--git-path", path});
+        if (r.exit_code != 0) {
+            throw wt::Error(ErrorKind::refused,
+                            "cannot check whether " + dir.string() +
+                                " is in the middle of an operation: " +
+                                error_message(r.err));
         }
         // Relative paths are relative to the directory Git ran in.
-        const fs::path state = dir / line;
+        const fs::path state = dir / single_value(r.out);
         std::error_code ec;
         const auto type = fs::symlink_status(state, ec).type();
         if (type == fs::file_type::not_found) {

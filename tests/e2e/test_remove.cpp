@@ -506,6 +506,22 @@ TEST_CASE("wt remove refuses a worktree in the middle of an operation") {
     check_untouched(box, repo, path, "feature");
 }
 
+TEST_CASE(
+    "wt remove sees an operation in progress under a path with a newline") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "new\nline" / "repo");
+    const fs::path path = wt_new(box, repo, "feature");
+    // A bisect leaves the branch checked out, so only its state file shows it.
+    git(box, path, {"bisect", "start"});
+
+    auto r = run_wt(box, repo, {"remove", "feature"});
+    CHECK(r.code == 2);
+    CHECK(r.err ==
+          "wt: refused: the worktree for 'feature' is in the middle of a "
+          "bisect; finish or abort it first\n");
+    check_untouched(box, repo, path, "feature");
+}
+
 TEST_CASE("wt remove refuses a worktree path that isn't a real directory") {
     Sandbox box;
     const fs::path repo = make_repo(box, box.work() / "repo");

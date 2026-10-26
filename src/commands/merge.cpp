@@ -37,7 +37,7 @@ bool fast_forward_only(const fs::path& dir) {
     if (r.exit_code != 0) {
         throw git::Error(git::error_message(r.err));
     }
-    return r.out.substr(0, r.out.find('\n')) == "only";
+    return git::single_value(r.out) == "only";
 }
 
 // Explains, on stderr, that `task` must be rebased before it can land.
@@ -331,7 +331,7 @@ std::optional<std::string> existing_upstream(const fs::path& dir,
     if (r.exit_code != 0) {
         throw git::Error(git::error_message(r.err));
     }
-    const std::string upstream = r.out.substr(0, r.out.find('\n'));
+    const std::string upstream = git::single_value(r.out);
     if (upstream.empty() || !git::resolve_commit(dir, upstream)) {
         return std::nullopt;
     }

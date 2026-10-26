@@ -254,9 +254,15 @@ inline std::string field(const std::string& out, const std::string& label) {
 // Reports whether Git still has a worktree registered at `path`.
 inline bool registered(const Sandbox& box, const fs::path& repo,
                        const fs::path& path) {
-    const auto list =
-        lines(git_output(box, repo, {"worktree", "list", "--porcelain"}));
-    return std::ranges::find(list, "worktree " + path.string()) != list.end();
+    // -z, so a path with a newline in it stays one field.
+    std::stringstream in(
+        git_output(box, repo, {"worktree", "list", "--porcelain", "-z"}));
+    for (std::string field; std::getline(in, field, '\0');) {
+        if (field == "worktree " + path.string()) {
+            return true;
+        }
+    }
+    return false;
 }
 
 // Checks that a refused `wt remove` left the worktree, its files, and its

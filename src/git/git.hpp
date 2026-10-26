@@ -30,6 +30,11 @@ public:
 Result run(const std::filesystem::path& dir,
            const std::vector<std::string>& args);
 
+// The one value a Git query printed: its output minus the newline that ends
+// it. Unlike its first line, this keeps a value with a newline in it (e.g. a
+// path) whole, so it can't silently become a different value.
+std::string single_value(std::string_view out);
+
 // Turns git's stderr into a one-line message, dropping the "fatal: " prefix.
 std::string error_message(std::string_view git_stderr);
 
