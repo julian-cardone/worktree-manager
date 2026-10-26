@@ -123,16 +123,35 @@ End each task with a concise handoff using this structure:
 - **Worth external review:** `Yes` or `No`, with one sentence explaining why
 - **Next action:** exact command or action, if any
 
-Independent code review is required before landing any change that:
+Independent code review is required before landing a change that alters safety semantics, including:
 
-- touches code marked with a `WARNING:` safety comment; or
-- changes a command's mutation or post-mutation verification path.
+- weakening or materially changing a safety invariant;
+- changing destructive behavior, cleanup semantics, branch deletion, or ownership guarantees;
+- changing what `wt` considers safe enough to mutate;
+- changing the meaning or verification of a successful mutation;
+- introducing a new safety-sensitive recovery path or user opt-in.
 
-The implementing agent may not waive required independent review.
+A change does not require independent review solely because it touches a `WARNING:` comment, mutation code, or verification code. Routine fixes that preserve an existing safety rule, tests, documentation, diagnostics, and behavior-preserving refactors may self-land after normal verification.
 
-The reviewer must inspect the actual diff and relevant surrounding code and return `APPROVE`, `FIX_REQUIRED`, or `DECISION_REQUIRED`.
+The implementing agent must not waive a review that is required by the criteria above.
 
-Documentation-only and test-only changes do not require independent review unless they also change behavior or reveal a decision that needs input.
+When independent review is required, review only:
+
+- the final diff;
+- the specific safety invariant or behavior affected;
+- the directly relevant surrounding code.
+
+Do not re-audit the entire command or repository unless the diff reveals a concrete reason to widen the review.
+
+The reviewer must return one of:
+
+- `APPROVE` — brief rationale only;
+- `FIX_REQUIRED` — identify the concrete issue and required fix;
+- `DECISION_REQUIRED` — state the exact unresolved decision.
+
+Only add broader analysis when needed to explain `FIX_REQUIRED` or `DECISION_REQUIRED`.
+
+Documentation-only and test-only changes do not require independent review unless they change behavior or reveal a safety decision that needs input.
 
 Only add a **Details** section when something unusual, risky, or non-obvious happened.
 

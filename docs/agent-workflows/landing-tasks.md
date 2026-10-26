@@ -68,11 +68,9 @@ Do these steps before reporting a task complete, not only right before `wt merge
 
 10. Confirm the task worktree contains no unintended uncommitted changes.
 
-11. If `AGENTS.md` requires independent code review, run it against the final diff and relevant surrounding code.
+11. If `AGENTS.md` requires independent code review, run it against the final state using the review scope defined there.
 
-    The reviewer must return `APPROVE`, `FIX_REQUIRED`, or `DECISION_REQUIRED`.
-
-    Do not land unless the result is `APPROVE`.
+    Do not land unless the review returns `APPROVE`.
 
     If review causes code changes, commit them, rebuild and retest, then review the new final state again if required.
 
