@@ -31,6 +31,8 @@ add_library(wt_core STATIC
   src/commands/app.cpp
   src/commands/list.cpp
   src/commands/merge.cpp
+  src/commands/merge_cleanup.cpp
+  src/commands/merge_preflight.cpp
   src/commands/new.cpp
   src/commands/remove.cpp
   src/commands/status.cpp
