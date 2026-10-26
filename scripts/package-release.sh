@@ -4,8 +4,8 @@
 #   scripts/package-release.sh [build-dir]    (default: build-release)
 #
 # Produces <build-dir>/wt-<version>-<os>-<arch>.tar.gz, containing
-# wt-<version>-<os>-<arch>/bin/wt, and prints its path. The release workflow
-# (.github/workflows/release.yml) runs this same script.
+# wt-<version>-<os>-<arch>/bin/wt and LICENSE, and prints its path. The
+# release workflow (.github/workflows/release.yml) runs this same script.
 set -eu
 
 build_dir=${1:-build-release}
@@ -38,10 +38,12 @@ manifest="$build_dir/install_manifest.txt"
 # system, so the manifest must never outlive the stage.
 trap 'rm -rf "$stage" "$unpacked"; rm -f "$manifest"' EXIT
 DESTDIR="$stage/$name" cmake --install "$build_dir" --prefix / --strip
+# The license ships with the archive but isn't installed.
+cp "$source_dir/LICENSE" "$stage/$name/LICENSE"
 
-# Refuse to ship anything the install rules didn't intend to ship.
-files=$(cd "$stage" && find . ! -type d | sort)
-if [ "$files" != "./$name/bin/wt" ]; then
+# Refuse to ship anything else.
+files=$(cd "$stage" && find . ! -type d | LC_ALL=C sort)
+if [ "$files" != "$(printf './%s/LICENSE\n./%s/bin/wt' "$name" "$name")" ]; then
   echo "package-release: unexpected files staged for packaging:" >&2
   echo "$files" >&2
   exit 1

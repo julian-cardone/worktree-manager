@@ -49,11 +49,11 @@ curl -fLO "$base/wt-$version-$platform.tar.gz"
 curl -fLO "$base/SHA256SUMS"
 shasum -a 256 --check --ignore-missing SHA256SUMS
 mkdir -p ~/.local
-tar -xzf "wt-$version-$platform.tar.gz" --strip-components=1 -C ~/.local
+tar -xzf "wt-$version-$platform.tar.gz" --strip-components=1 -C ~/.local "wt-$version-$platform/bin/wt"
 wt --version
 ```
 
-The archive contains only `wt-<version>-<platform>/bin/wt`, so this installs `~/.local/bin/wt`.
+The archive contains `wt-<version>-<platform>/bin/wt` and the `LICENSE`; this extracts only the binary, to `~/.local/bin/wt`.
 The macOS binary isn't notarized; downloading with `curl` as above avoids the quarantine flag a browser download would add, which makes macOS block it.
 The binary is built on macOS 15 and uses the system's C and C++ runtime libraries, so it may not run on older versions.
 On other platforms, such as Linux or Intel Macs, build from source.
