@@ -79,7 +79,7 @@ All development on this repository must exercise `wt` as the intended worktree w
 - If `wt` is broken, unsafe, or lacks a required lifecycle capability, stop and report the limitation instead of bypassing it. Keep the missing-capabilities section of `project-notes/wt-usage.md` current as gaps are found or resolved.
 - Friction in general Git workflows is not by itself a reason to add a `wt` command. Only propose new `wt` commands that fit the product boundary above.
 - Record concise, non-routine friction in `project-notes/wt-usage.md`, including actual rebase conflicts, repeated manual workarounds, recurring cleanup steps, and workflow interruptions. For rebase conflicts, name the task and conflicted files. Do not log conflict-free rebases or routine successful commands.
-- Record significant product, architecture, safety, reliability, performance, or usability findings in `project-notes/findings.md`, and surface important findings when discovered.
+- Record significant product, architecture, safety, reliability, performance, or usability findings in `project-notes/findings.md` (Open) or its subsystem files (Addressed), and surface important findings when discovered.
 - Do not log routine successful commands or generate unnecessary noise.
 
 This repository keeps `main` linear. Before reporting a task complete or landing it, follow `docs/agent-workflows/landing-tasks.md`.
@@ -167,7 +167,7 @@ Use `project-notes/` for information that should persist but does not belong in 
 
 - `project-notes/TODO.md` — deferred work that has already been surfaced to me and approved for recording.
 - `project-notes/wt-usage.md` — missing `wt` capabilities, meaningful friction, observations from real use, and concise records of actual rebase conflicts.
-- `project-notes/findings.md` — significant product, architecture, safety, reliability, performance, or usability findings: **Open** ones still need action; **Addressed** ones explain why existing checks and rules exist. Move a finding to Addressed when it is handled.
+- `project-notes/findings.md` and `project-notes/findings/` — significant product, architecture, safety, reliability, performance, or usability findings: **Open** ones, in `findings.md`, still need action; **Addressed** ones, in the subsystem file for their area, explain why existing checks and rules exist. Read the relevant subsystem file before changing that area. Move a finding to Addressed when it is handled.
 
 Keep these files concise, current, and actionable. Remove resolved items instead of keeping them as permanent historical logs.
 
