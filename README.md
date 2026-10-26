@@ -39,6 +39,8 @@ Tests live in `tests/`:
 - `tests/unit/` — in-process tests against the `wt_core` library, each given a throwaway temp directory as its working directory.
 - `tests/e2e/` — run the real `build/wt` binary as a subprocess and check its output and exit code.
   Each run happens in a throwaway temp directory with its own `HOME` and Git config, so tests can't touch your real repositories.
+  Tests are grouped by command in `test_<command>.cpp`; `test_cli.cpp` and `test_repository.cpp` cover behavior common to all commands.
+  Helpers shared between those files live in `tests/support/e2e.hpp`.
 
 Each suite can also be run directly, e.g. `./build/tests/wt_unit_tests` or `./build/tests/wt_e2e_tests`.
 

@@ -19,7 +19,14 @@ catch_discover_tests(wt_unit_tests TEST_PREFIX "unit: ")
 
 # E2E tests: spawn the real build/wt binary.
 add_executable(wt_e2e_tests
-  e2e/test_cli.cpp)
+  e2e/test_cli.cpp
+  e2e/test_list.cpp
+  e2e/test_merge.cpp
+  e2e/test_merge_cleanup.cpp
+  e2e/test_new.cpp
+  e2e/test_remove.cpp
+  e2e/test_repository.cpp
+  e2e/test_status.cpp)
 target_link_libraries(wt_e2e_tests PRIVATE wt_warnings Catch2::Catch2WithMain)
 target_compile_definitions(wt_e2e_tests PRIVATE
   WT_BINARY_PATH="$<TARGET_FILE:wt>"
