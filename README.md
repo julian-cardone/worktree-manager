@@ -34,6 +34,8 @@ Pass `-DWT_BUILD_TESTS=OFF` at configure time to skip building the tests (and fe
 ctest --test-dir build --output-on-failure
 ```
 
+Every test runs in its own sandbox, so the suite can run in parallel with `-j`.
+
 Tests live in `tests/`:
 
 - `tests/unit/` — in-process tests against the `wt_core` library, each given a throwaway temp directory as its working directory.
@@ -50,8 +52,20 @@ Code style is defined in `.clang-format`.
 Format all sources with:
 
 ```sh
-git ls-files '*.cpp' '*.hpp' | xargs clang-format -i
+git ls-files -z '*.cpp' '*.hpp' | xargs -0 clang-format -i
 ```
+
+Check formatting without changing files:
+
+```sh
+git ls-files -z '*.cpp' '*.hpp' | xargs -0 clang-format --dry-run --Werror
+```
+
+## Continuous integration
+
+GitHub Actions (`.github/workflows/ci.yml`) runs the commands above on every push to `main` and every pull request.
+It configures, builds, and runs the full test suite on Linux and macOS, and checks formatting with clang-format 23.
+The tests need no Git setup on the runner, since they never read its Git config.
 
 ## Usage
 
@@ -500,4 +514,5 @@ tests/
   unit/               # Catch2 unit tests
   e2e/                # Catch2 tests that drive the built binary
   support/            # shared test helpers (e.g. the temp-directory sandbox)
+.github/workflows/    # CI: build, test, and format check
 ```
