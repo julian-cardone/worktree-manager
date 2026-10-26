@@ -365,3 +365,167 @@ TEST_CASE("wt status requires a task name") {
     CHECK(r.code != 0);
     CHECK_THAT(r.err, ContainsSubstring("task"));
 }
+
+TEST_CASE("wt status --json reports changes and divergence") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature/x");
+    commit_file(box, path, "a.txt", "a\n");
+    commit_file(box, path, "b.txt", "b\n");
+    commit_file(box, repo, "main.txt", "main\n");
+    write_file(path / "staged.txt", "staged\n");
+    git(box, path, {"add", "staged.txt"});
+    write_file(path / "README", "changed\n");
+    write_file(path / "untracked.txt", "new\n");
+    const std::string head = git_output(box, path, {"rev-parse", "HEAD"});
+
+    auto r = run_wt(box, repo, {"status", "feature/x", "--json"});
+    CHECK(r.code == 0);
+    CHECK(r.err.empty());
+    CHECK(
+        r.out ==
+        R"({"branch":"feature/x","path":")" + path.string() + R"(","head":")" +
+            head +
+            R"(","status":"dirty",)"
+            R"("operation":null,"changes":{"staged":1,"modified":1,"untracked":1,)"
+            R"("conflicts":0},)"
+            R"("integration":{"branch":"main","ahead":2,)"
+            R"("behind":1}})"
+            "\n");
+}
+
+TEST_CASE("wt status --json prints the path exactly, without ~") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.home() / "my \"repo\"");
+
+    auto r = run_wt(box, repo, {"status", "main", "--json"});
+    CHECK(r.code == 0);
+    CHECK_THAT(r.out, StartsWith(R"({"branch":"main","path":")" +
+                                 box.home().string() + R"(/my \"repo\"",)"));
+}
+
+TEST_CASE("wt status --json has no integration for the integration branch") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+
+    SECTION("the integration branch itself") {
+        auto r = run_wt(box, repo, {"status", "main", "--json"});
+        CHECK(r.code == 0);
+        CHECK(r.err.empty());
+        CHECK_THAT(r.out, ContainsSubstring(R"(,"integration":null})"));
+    }
+    SECTION("no integration branch") {
+        git(box, repo, {"branch", "-m", "main", "trunk"});
+        auto r = run_wt(box, repo, {"status", "trunk", "--json"});
+        CHECK(r.code == 0);
+        CHECK_THAT(r.out, ContainsSubstring(R"(,"integration":null})"));
+        CHECK_THAT(r.err, StartsWith("wt: warning: not comparing with an "
+                                     "integration branch: "));
+    }
+}
+
+TEST_CASE("wt status --json has no changes for a missing worktree") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "gone");
+    commit_file(box, path, "a.txt", "a\n");
+    const std::string head = git_output(box, path, {"rev-parse", "HEAD"});
+    fs::remove_all(path);
+
+    auto r = run_wt(box, repo, {"status", "gone", "--json"});
+    CHECK(r.code == 0);
+    CHECK(r.out ==
+          R"({"branch":"gone","path":")" + path.string() + R"(","head":")" +
+              head +
+              R"(","status":"missing","operation":null,"changes":null,)"
+              R"("integration":{"branch":"main","ahead":1,)"
+              R"("behind":0}})"
+              "\n");
+    CHECK_THAT(r.err,
+               StartsWith("wt: warning: the worktree's directory is gone"));
+}
+
+TEST_CASE("wt status --json has no head for a branch with no commits") {
+    Sandbox box;
+    const fs::path repo = box.work() / "empty";
+    git(box, box.work(), {"init", "-q", "-b", "main", repo.string()});
+    write_file(repo / "new.txt", "new\n");
+
+    auto r = run_wt(box, repo, {"status", "main", "--json"});
+    CHECK(r.code == 0);
+    CHECK(r.err.empty());
+    CHECK(
+        r.out ==
+        R"({"branch":"main","path":")" + repo.string() +
+            R"(","head":null,"status":"dirty",)"
+            R"("operation":null,"changes":{"staged":0,"modified":0,"untracked":1,)"
+            R"("conflicts":0},"integration":null})"
+            "\n");
+}
+
+TEST_CASE("wt status --json prints nothing on stdout when it fails") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+
+    SECTION("no such task") {
+        auto r = run_wt(box, repo, {"status", "nope", "--json"});
+        CHECK(r.code == 1);
+        CHECK(r.out.empty());
+        CHECK_THAT(r.err, StartsWith("wt: error: no worktree for task"));
+    }
+    SECTION("unreadable status") {
+        const fs::path path = wt_new(box, repo, "broken");
+        fs::remove(path / ".git");
+        auto r = run_wt(box, repo, {"status", "broken", "--json"});
+        CHECK(r.code == 1);
+        CHECK(r.out.empty());
+        CHECK_THAT(r.err, StartsWith("wt: error: cannot read the status of " +
+                                     path.string()));
+    }
+    SECTION("outside a repository") {
+        auto r = run_wt(box, box.work(), {"status", "main", "--json"});
+        CHECK(r.code == 4);
+        CHECK(r.out.empty());
+    }
+}
+
+TEST_CASE("wt status --json reports an operation in progress") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature");
+
+    SECTION("git am") {
+        stop_git_am(box, path);
+        auto r = run_wt(box, repo, {"status", "feature", "--json"});
+        CHECK(r.code == 0);
+        CHECK_THAT(r.out, ContainsSubstring(R"(,"operation":"am",)"));
+    }
+    SECTION("a rebase, which detaches HEAD") {
+        commit_file(box, path, "a.txt", "task\n");
+        commit_file(box, repo, "a.txt", "main\n");
+        REQUIRE(run_in(box, path, {find_on_path("git"), "rebase", "-q", "main"})
+                    .code != 0);
+        auto r = run_wt(box, repo, {"status", "feature", "--json"});
+        CHECK(r.code == 0);
+        CHECK_THAT(r.out, StartsWith(R"({"branch":"feature","path":")" +
+                                     path.string() + "\""));
+        CHECK_THAT(r.out, ContainsSubstring(
+                              R"("status":"dirty","operation":"rebase",)"));
+    }
+}
+
+TEST_CASE(
+    "wt status --json prints nothing when it can't tell if an "
+    "operation is running") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const Env failing =
+        git_shim(box,
+                 "case \" $* \" in *' --git-path rebase-merge '*) "
+                 "echo 'fatal: simulated failure' >&2; exit 128;; esac\n");
+
+    auto r = run_wt(box, repo, {"status", "main", "--json"}, failing);
+    CHECK(r.code == 1);
+    CHECK(r.out.empty());
+    CHECK_THAT(r.err, StartsWith("wt: error: cannot check whether "));
+}

@@ -40,7 +40,8 @@ add_library(wt_core STATIC
   src/git/worktree.cpp
   src/layout/container.cpp
   src/layout/task.cpp
-  src/ui/format.cpp)
+  src/ui/format.cpp
+  src/ui/json.cpp)
 
 target_include_directories(wt_core PUBLIC src)
 target_compile_definitions(wt_core PUBLIC WT_VERSION="${PROJECT_VERSION}")

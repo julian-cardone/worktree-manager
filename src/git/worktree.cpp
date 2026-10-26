@@ -350,11 +350,11 @@ std::optional<std::string> rebased_branch(const Worktree& worktree) {
 // WARNING: Git keeps most of this state as files, not refs, and `git am` and
 // a cherry-pick or revert between steps leave the branch checked out and the
 // files clean. Reads the paths Git itself checks, as `git status` does.
-std::optional<std::string> operation_in_progress(const fs::path& dir) {
-    const std::pair<const char*, const char*> kHeads[] = {
-        {"MERGE_HEAD", "a merge"},
-        {"CHERRY_PICK_HEAD", "a cherry-pick"},
-        {"REVERT_HEAD", "a revert"},
+std::optional<Operation> current_operation(const fs::path& dir) {
+    const std::pair<const char*, Operation> kHeads[] = {
+        {"MERGE_HEAD", Operation::merge},
+        {"CHERRY_PICK_HEAD", Operation::cherry_pick},
+        {"REVERT_HEAD", Operation::revert},
     };
     for (const auto& [ref, what] : kHeads) {
         if (resolve_commit(dir, ref)) {
@@ -363,10 +363,12 @@ std::optional<std::string> operation_in_progress(const fs::path& dir) {
     }
 
     // rebase-apply holds `git am`'s state too; "applying" tells them apart.
-    const std::pair<const char*, const char*> kStates[] = {
-        {"rebase-merge", "a rebase"}, {"rebase-apply/applying", "a git am"},
-        {"rebase-apply", "a rebase"}, {"sequencer", "a cherry-pick or revert"},
-        {"BISECT_LOG", "a bisect"},
+    const std::pair<const char*, Operation> kStates[] = {
+        {"rebase-merge", Operation::rebase},
+        {"rebase-apply/applying", Operation::am},
+        {"rebase-apply", Operation::rebase},
+        {"sequencer", Operation::sequencer},
+        {"BISECT_LOG", Operation::bisect},
     };
     for (const auto& [path, what] : kStates) {
         // One path per query: rev-parse separates the paths it prints with
@@ -393,6 +395,53 @@ std::optional<std::string> operation_in_progress(const fs::path& dir) {
         return what;
     }
     return std::nullopt;
+}
+
+std::optional<std::string> operation_in_progress(const fs::path& dir) {
+    if (const auto operation = current_operation(dir)) {
+        return std::string(describe(*operation));
+    }
+    return std::nullopt;
+}
+
+std::string_view describe(Operation operation) {
+    switch (operation) {
+        case Operation::merge:
+            return "a merge";
+        case Operation::rebase:
+            return "a rebase";
+        case Operation::am:
+            return "a git am";
+        case Operation::cherry_pick:
+            return "a cherry-pick";
+        case Operation::revert:
+            return "a revert";
+        case Operation::sequencer:
+            return "a cherry-pick or revert";
+        case Operation::bisect:
+            return "a bisect";
+    }
+    return "an operation";
+}
+
+std::string_view operation_name(Operation operation) {
+    switch (operation) {
+        case Operation::merge:
+            return "merge";
+        case Operation::rebase:
+            return "rebase";
+        case Operation::am:
+            return "am";
+        case Operation::cherry_pick:
+            return "cherry-pick";
+        case Operation::revert:
+            return "revert";
+        case Operation::sequencer:
+            return "cherry-pick-or-revert";
+        case Operation::bisect:
+            return "bisect";
+    }
+    return "unknown";
 }
 
 StatusResult worktree_status(const Worktree& worktree, bool count_ignored) {
@@ -614,6 +663,18 @@ std::string_view status_label(Status status) {
             return "unknown";
     }
     return "unknown";
+}
+
+std::string_view status_name(Status status) {
+    return status == Status::bare ? "bare" : status_label(status);
+}
+
+std::optional<std::string> head_commit(const Worktree& worktree) {
+    // Git reports an all-zero HEAD for a branch with no commits yet.
+    if (worktree.head.find_first_not_of('0') == std::string::npos) {
+        return std::nullopt;
+    }
+    return worktree.head;
 }
 
 }  // namespace wt::git

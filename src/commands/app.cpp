@@ -43,10 +43,14 @@ std::unique_ptr<CLI::App> make_app() {
     app->set_version_flag("-V,--version", "wt " + std::string(kVersion),
                           "Print the wt version and exit");
     app->require_subcommand(0, 1);
+    // For agents and scripts; see "JSON output" in README.md.
+    constexpr const char* kJsonHelp =
+        "Print a JSON document instead of the human-readable output";
     app->add_subcommand(
-        "list",
-        "List the repository's worktrees and whether each has uncommitted "
-        "changes");
+           "list",
+           "List the repository's worktrees and whether each has uncommitted "
+           "changes")
+        ->add_flag("--json", kJsonHelp);
     app->add_subcommand("new",
                         "Create a branch and worktree for a task, starting "
                         "from the integration branch")
@@ -54,12 +58,13 @@ std::unique_ptr<CLI::App> make_app() {
                      "Task name, used as the branch name (e.g. feature-x or "
                      "claude/fix-login)")
         ->required();
-    app->add_subcommand("status",
-                        "Show a task's worktree: its HEAD, uncommitted "
-                        "changes, and commits ahead of or behind the "
-                        "integration branch")
-        ->add_option("task", "Task name, i.e. the worktree's branch")
+    auto* status = app->add_subcommand(
+        "status",
+        "Show a task's worktree: its HEAD, uncommitted changes, and commits "
+        "ahead of or behind the integration branch");
+    status->add_option("task", "Task name, i.e. the worktree's branch")
         ->required();
+    status->add_flag("--json", kJsonHelp);
     auto* remove = app->add_subcommand(
         "remove",
         "Remove a task's worktree if it has no uncommitted changes; the "
@@ -108,8 +113,8 @@ int run(int argc, const char* const* argv, const Context& invoked) {
         app->parse(argc, argv);
         Context ctx = invoked;
         ctx.repo = git::invoked_repository(ctx.cwd, ctx.git_dir);
-        if (app->got_subcommand("list")) {
-            return list_command(ctx);
+        if (auto* sub = app->get_subcommand("list"); sub->parsed()) {
+            return list_command(ctx, sub->get_option("--json")->as<bool>());
         }
         if (auto* sub = app->get_subcommand("new"); sub->parsed()) {
             unchanged = "No branch or worktree was created.";
@@ -131,7 +136,8 @@ int run(int argc, const char* const* argv, const Context& invoked) {
         }
         if (auto* sub = app->get_subcommand("status"); sub->parsed()) {
             return status_command(ctx,
-                                  sub->get_option("task")->as<std::string>());
+                                  sub->get_option("task")->as<std::string>(),
+                                  sub->get_option("--json")->as<bool>());
         }
     } catch (const CLI::ParseError& e) {
         return app->exit(e, invoked.out, invoked.err);

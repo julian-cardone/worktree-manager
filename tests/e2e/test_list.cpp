@@ -297,3 +297,185 @@ TEST_CASE("wt list marks a worktree nested inside the main checkout") {
     CHECK_THAT(row_for(r.out, nested.string()), StartsWith("* nested"));
     CHECK_THAT(row_for(r.out, repo.string()), StartsWith("  main"));
 }
+
+TEST_CASE("wt list --json describes every worktree") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path wts = box.work() / "repo.worktrees";
+    const fs::path feature = wts / "feature-x";
+    // After feature-x: Git lists linked worktrees by name, after the main one.
+    const fs::path detached = wts / "other";
+    git(box, repo,
+        {"worktree", "add", "-q", "-b", "feature/x", feature.string()});
+    git(box, repo, {"worktree", "add", "-q", "--detach", detached.string()});
+    git(box, repo, {"worktree", "lock", detached.string()});
+    write_file(feature / "wip.txt", "wip\n");
+    const std::string head = git_output(box, repo, {"rev-parse", "HEAD"});
+
+    auto r = run_wt(box, feature, {"list", "--json"});
+    CHECK(r.code == 0);
+    CHECK(r.err.empty());
+    CHECK(r.out ==
+          R"({"worktrees":[)"
+          R"({"path":")" +
+              repo.string() + R"(","branch":"main","head":")" + head +
+              R"(","status":"clean","operation":null,"current":false,)"
+              R"("detached":false,"locked":false},)"
+              R"({"path":")" +
+              feature.string() + R"(","branch":"feature/x","head":")" + head +
+              R"(","status":"dirty","operation":null,"current":true,)"
+              R"("detached":false,"locked":false},)"
+              R"({"path":")" +
+              detached.string() + R"(","branch":null,"head":")" + head +
+              R"(","status":"clean","operation":null,"current":false,)"
+              R"("detached":true,"locked":true}]})"
+              "\n");
+}
+
+TEST_CASE("wt list --json prints paths exactly, without ~ or sanitizing") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.home() / "my \"repo\"\\\nx");
+
+    auto r = run_wt(box, repo, {"list", "--json"});
+    CHECK(r.code == 0);
+    CHECK_THAT(r.out,
+               StartsWith(R"({"worktrees":[{"path":")" + box.home().string() +
+                          R"(/my \"repo\"\\\u000ax","branch":"main",)"));
+
+    // The table still shortens and sanitizes it.
+    r = run_wt(box, repo, {"list"});
+    CHECK(lines(r.out).at(1) == "* main    clean   ~/my \"repo\"\\?x");
+}
+
+TEST_CASE("wt list --json reports missing and unreadable worktrees") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path wts = box.work() / "repo.worktrees";
+    const fs::path gone = wts / "gone";
+    const fs::path broken = wts / "unreadable";  // listed after "gone"
+    git(box, repo, {"worktree", "add", "-q", "-b", "gone", gone.string()});
+    git(box, repo, {"worktree", "add", "-q", "-b", "broken", broken.string()});
+    fs::remove_all(gone);
+    fs::remove(broken / ".git");
+    const std::string head = git_output(box, repo, {"rev-parse", "HEAD"});
+
+    auto r = run_wt(box, repo, {"list", "--json"});
+    CHECK(r.code == 0);
+    CHECK(r.out ==
+          R"({"worktrees":[)"
+          R"({"path":")" +
+              repo.string() + R"(","branch":"main","head":")" + head +
+              R"(","status":"clean","operation":null,"current":true,)"
+              R"("detached":false,"locked":false},)"
+              R"({"path":")" +
+              gone.string() + R"(","branch":"gone","head":")" + head +
+              R"(","status":"missing","operation":null,"current":false,)"
+              R"("detached":false,"locked":false},)"
+              R"({"path":")" +
+              broken.string() + R"(","branch":"broken","head":")" + head +
+              R"(","status":"unknown","operation":null,"current":false,)"
+              R"("detached":false,"locked":false}]})"
+              "\n");
+    // Warnings go to stderr, never into the JSON.
+    CHECK_THAT(r.err, StartsWith("wt: warning: cannot read the status of " +
+                                 broken.string()));
+}
+
+TEST_CASE("wt list --json has no head for a branch with no commits") {
+    Sandbox box;
+    const fs::path repo = box.work() / "empty";
+    git(box, box.work(), {"init", "-q", "-b", "main", repo.string()});
+
+    auto r = run_wt(box, repo, {"list", "--json"});
+    CHECK(r.code == 0);
+    CHECK(
+        r.out ==
+        R"({"worktrees":[{"path":")" + repo.string() +
+            R"(","branch":"main","head":null,"status":"clean",)"
+            R"("operation":null,"current":true,"detached":false,"locked":false}]})"
+            "\n");
+}
+
+TEST_CASE("wt list --json handles a bare repository") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path bare = box.work() / "bare.git";
+    git(box, box.work(),
+        {"clone", "-q", "--bare", repo.string(), bare.string()});
+
+    auto r = run_wt(box, bare, {"list", "--json"});
+    CHECK(r.code == 0);
+    CHECK(
+        r.out ==
+        R"({"worktrees":[{"path":")" + bare.string() +
+            R"(","branch":null,"head":null,"status":"bare",)"
+            R"("operation":null,"current":true,"detached":false,"locked":false}]})"
+            "\n");
+}
+
+TEST_CASE("wt list --json prints nothing on stdout when it fails") {
+    Sandbox box;
+    SECTION("outside a repository") {
+        auto r = run_wt(box, box.work(), {"list", "--json"});
+        CHECK(r.code == 4);
+        CHECK(r.out.empty());
+        CHECK_THAT(r.err, StartsWith("wt: git error: "));
+    }
+    SECTION("a branch name JSON can't carry") {
+        const fs::path repo = box.work() / "repo";
+        git(box, box.work(), {"init", "-q", "-b", "main", repo.string()});
+        git(box, repo, {"symbolic-ref", "HEAD", "refs/heads/caf\xff"});
+        auto r = run_wt(box, repo, {"list", "--json"});
+        CHECK(r.code == 1);
+        CHECK(r.out.empty());
+        CHECK(r.err ==
+              "wt: error: cannot print 'caf\xff' as JSON: it is not valid "
+              "UTF-8\n");
+    }
+}
+
+TEST_CASE("wt list --json reports operations in progress") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path rebasing = wt_new(box, repo, "feature");
+    commit_file(box, rebasing, "a.txt", "task\n");
+    commit_file(box, repo, "a.txt", "main\n");
+    REQUIRE(run_in(box, rebasing, {find_on_path("git"), "rebase", "-q", "main"})
+                .code != 0);
+    const fs::path bisecting = wt_new(box, repo, "other");
+    git(box, bisecting, {"bisect", "start"});
+
+    auto r = run_wt(box, repo, {"list", "--json"});
+    CHECK(r.code == 0);
+    CHECK(r.err.empty());
+    // A rebase detaches HEAD, but the worktree is still the task's.
+    CHECK_THAT(r.out,
+               ContainsSubstring(
+                   R"({"path":")" + rebasing.string() +
+                   R"(","branch":"feature","head":")" +
+                   git_output(box, rebasing, {"rev-parse", "HEAD"}) +
+                   R"(","status":"dirty","operation":"rebase",)"
+                   R"("current":false,"detached":true,"locked":false})"));
+    CHECK_THAT(r.out,
+               ContainsSubstring(
+                   R"({"path":")" + bisecting.string() +
+                   R"(","branch":"other","head":")" +
+                   git_output(box, bisecting, {"rev-parse", "HEAD"}) +
+                   R"(","status":"clean","operation":"bisect",)"
+                   R"("current":false,"detached":false,"locked":false})"));
+}
+
+TEST_CASE("wt list --json says when it can't tell if an operation is running") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const Env failing =
+        git_shim(box,
+                 "case \" $* \" in *' --git-path rebase-merge '*) "
+                 "echo 'fatal: simulated failure' >&2; exit 128;; esac\n");
+
+    auto r = run_wt(box, repo, {"list", "--json"}, failing);
+    CHECK(r.code == 0);
+    CHECK_THAT(r.out,
+               ContainsSubstring(R"("status":"clean","operation":"unknown",)"));
+    CHECK_THAT(r.err, StartsWith("wt: warning: cannot check whether "));
+}

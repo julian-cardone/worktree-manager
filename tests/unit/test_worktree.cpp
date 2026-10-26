@@ -221,3 +221,36 @@ TEST_CASE("status_label names each status") {
     CHECK(status_label(Status::missing) == "missing");
     CHECK(status_label(Status::unknown) == "unknown");
 }
+
+TEST_CASE("status_name names each status for JSON") {
+    using wt::git::Status;
+    using wt::git::status_name;
+    CHECK(status_name(Status::clean) == "clean");
+    CHECK(status_name(Status::dirty) == "dirty");
+    CHECK(status_name(Status::bare) == "bare");
+    CHECK(status_name(Status::missing) == "missing");
+    CHECK(status_name(Status::unknown) == "unknown");
+}
+
+TEST_CASE("head_commit leaves out bare repositories and unborn branches") {
+    using wt::git::head_commit;
+    using wt::git::Worktree;
+    CHECK(head_commit(Worktree{.head = kHash}) == kHash);
+    CHECK(head_commit(Worktree{.head = std::string(40, '0')}) == std::nullopt);
+    CHECK(head_commit(Worktree{.bare = true}) == std::nullopt);
+}
+
+TEST_CASE("operations have a description and a JSON name") {
+    using wt::git::describe;
+    using wt::git::Operation;
+    using wt::git::operation_name;
+    CHECK(describe(Operation::am) == "a git am");
+    CHECK(describe(Operation::sequencer) == "a cherry-pick or revert");
+    CHECK(operation_name(Operation::merge) == "merge");
+    CHECK(operation_name(Operation::rebase) == "rebase");
+    CHECK(operation_name(Operation::am) == "am");
+    CHECK(operation_name(Operation::cherry_pick) == "cherry-pick");
+    CHECK(operation_name(Operation::revert) == "revert");
+    CHECK(operation_name(Operation::sequencer) == "cherry-pick-or-revert");
+    CHECK(operation_name(Operation::bisect) == "bisect");
+}

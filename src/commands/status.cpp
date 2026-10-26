@@ -5,6 +5,7 @@
 #include "git/repo.hpp"
 #include "git/worktree.hpp"
 #include "ui/format.hpp"
+#include "ui/json.hpp"
 
 #include <optional>
 #include <ostream>
@@ -77,74 +78,144 @@ const git::Worktree& find_status_worktree(
     return find_task_worktree(ctx.repo, worktrees, task);
 }
 
-}  // namespace
-
-int status_command(const Context& ctx, const std::string& task) {
-    const auto worktrees = git::list_worktrees(ctx.repo);
-    const git::Worktree& worktree = find_status_worktree(ctx, worktrees, task);
-    // Git reports an all-zero HEAD for a branch with no commits yet.
-    const bool unborn =
-        worktree.head.find_first_not_of('0') == std::string::npos;
-    const auto status = git::worktree_status(worktree);
-
-    std::vector<std::vector<std::string>> rows = {
-        {"Path:", ui::printable(ui::tilde_path(worktree.path, ctx.home))},
-        {"HEAD:",
-         unborn ? "(no commits)"
-                : ui::printable(git::commit_summary(ctx.repo, worktree.head))},
-        {"Status:", std::string(git::status_label(status.status))},
-    };
-    const bool readable = status.status == git::Status::clean ||
-                          status.status == git::Status::dirty;
-    // An operation can leave the files clean, so the status alone doesn't
-    // say the worktree is idle; `wt merge` and `wt remove` refuse it.
+// What `wt status` reports, in either format.
+struct TaskStatus {
+    const git::Worktree& worktree;
+    std::optional<std::string> head;
+    git::StatusResult status;
+    std::optional<git::Operation> operation;
+    // Why wt couldn't tell whether an operation is in progress, if it couldn't.
     std::optional<std::string> operation_unknown;
-    if (readable) {
-        try {
-            if (const auto operation =
-                    git::operation_in_progress(worktree.path)) {
-                rows.push_back({"In progress:", *operation});
-            }
-        } catch (const Error& e) {
-            operation_unknown = e.what();
-            rows.push_back({"In progress:", "unknown"});
-        }
+    // Set when the branch was compared with the integration branch.
+    std::optional<std::string> base;
+    git::Divergence divergence = {};
+};
+
+bool has_changes(const git::StatusResult& status) {
+    return status.status == git::Status::clean ||
+           status.status == git::Status::dirty;
+}
+
+void print_summary(const Context& ctx, const std::string& task,
+                   const TaskStatus& s) {
+    std::vector<std::vector<std::string>> rows = {
+        {"Path:", ui::printable(ui::tilde_path(s.worktree.path, ctx.home))},
+        {"HEAD:", s.head ? ui::printable(git::commit_summary(ctx.repo, *s.head))
+                         : "(no commits)"},
+        {"Status:", std::string(git::status_label(s.status.status))},
+    };
+    if (s.operation_unknown) {
+        rows.push_back({"In progress:", "unknown"});
+    } else if (s.operation) {
+        rows.push_back(
+            {"In progress:", std::string(git::describe(*s.operation))});
     }
-    if (readable) {
-        const auto& changes = status.changes;
+    if (has_changes(s.status)) {
+        const auto& changes = s.status.changes;
         rows.push_back({"Staged:", std::to_string(changes.staged)});
         rows.push_back({"Modified:", std::to_string(changes.modified)});
         rows.push_back(
             {"Untracked:", std::to_string(changes.untracked.size())});
         rows.push_back({"Conflicts:", std::to_string(changes.conflicts)});
     }
+    if (s.base) {
+        const std::string name = ui::printable(*s.base);
+        rows.push_back(
+            {"Ahead " + name + ":", std::to_string(s.divergence.ahead)});
+        rows.push_back(
+            {"Behind " + name + ":", std::to_string(s.divergence.behind)});
+    }
+    ctx.out << ui::printable(task) << "\n\n" << ui::format_table(rows);
+}
+
+// WARNING: the field names and meanings are part of wt's interface,
+// documented in README.md. Add fields rather than change existing ones.
+void print_json(const Context& ctx, const std::string& task,
+                const TaskStatus& s) {
+    using ui::Json;
+    const auto& changes = s.status.changes;
+    const Json counts =
+        has_changes(s.status)
+            ? Json::object({
+                  {"staged", Json::number(changes.staged)},
+                  {"modified", Json::number(changes.modified)},
+                  {"untracked", Json::number(changes.untracked.size())},
+                  {"conflicts", Json::number(changes.conflicts)},
+              })
+            : Json::null();
+    const Json integration =
+        s.base ? Json::object({
+                     {"branch", Json::string(*s.base)},
+                     {"ahead", Json::number(s.divergence.ahead)},
+                     {"behind", Json::number(s.divergence.behind)},
+                 })
+               : Json::null();
+    ctx.out << Json::object(
+                   {
+                       {"branch", Json::string(task)},
+                       {"path", Json::string(s.worktree.path.string())},
+                       {"head", Json::string_or_null(s.head)},
+                       {"status",
+                        Json::string(git::status_name(s.status.status))},
+                       {"operation",
+                        s.operation
+                            ? Json::string(git::operation_name(*s.operation))
+                            : Json::null()},
+                       {"changes", counts},
+                       {"integration", integration},
+                   })
+                   .text()
+            << '\n';
+}
+
+}  // namespace
+
+int status_command(const Context& ctx, const std::string& task, bool json) {
+    const auto worktrees = git::list_worktrees(ctx.repo);
+    TaskStatus s{.worktree = find_status_worktree(ctx, worktrees, task)};
+    s.head = git::head_commit(s.worktree);
+    s.status = git::worktree_status(s.worktree);
+    // An operation can leave the files clean, so the status alone doesn't
+    // say the worktree is idle; `wt merge` and `wt remove` refuse it.
+    if (has_changes(s.status)) {
+        try {
+            s.operation = git::current_operation(s.worktree.path);
+        } catch (const Error& e) {
+            s.operation_unknown = e.what();
+        }
+    }
     // Branch refs rather than the worktree's HEAD, so this works even when
     // the worktree's directory is gone.
-    if (!unborn) {
+    if (s.head) {
         if (const auto base = try_integration_branch(ctx);
             base && *base != task) {
-            const auto d = git::divergence(ctx.repo, "refs/heads/" + task,
+            s.base = base;
+            s.divergence = git::divergence(ctx.repo, "refs/heads/" + task,
                                            "refs/heads/" + *base);
-            const std::string name = ui::printable(*base);
-            rows.push_back({"Ahead " + name + ":", std::to_string(d.ahead)});
-            rows.push_back({"Behind " + name + ":", std::to_string(d.behind)});
         }
     }
 
-    ctx.out << ui::printable(task) << "\n\n" << ui::format_table(rows);
-
-    if (status.status == git::Status::missing) {
-        report_missing(ctx, worktree, task);
+    const bool unknown = s.status.status == git::Status::unknown;
+    // JSON goes out only on success, so a script never mistakes a partial
+    // report for a complete one.
+    if (!json) {
+        print_summary(ctx, task, s);
+    } else if (!unknown && !s.operation_unknown) {
+        print_json(ctx, task, s);
     }
-    if (status.status == git::Status::unknown) {
+
+    if (s.status.status == git::Status::missing) {
+        report_missing(ctx, s.worktree, task);
+    }
+    if (unknown) {
         ctx.err << error_prefix(ErrorKind::user) << "cannot read the status of "
-                << ui::printable(worktree.path.string()) << ": "
-                << ui::printable(status.detail) << '\n';
+                << ui::printable(s.worktree.path.string()) << ": "
+                << ui::printable(s.status.detail) << '\n';
         return exit_code(ErrorKind::user);
     }
-    if (operation_unknown) {
+    if (s.operation_unknown) {
         ctx.err << error_prefix(ErrorKind::user)
-                << ui::printable(*operation_unknown) << '\n';
+                << ui::printable(*s.operation_unknown) << '\n';
         return exit_code(ErrorKind::user);
     }
     return 0;

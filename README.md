@@ -61,8 +61,10 @@ git ls-files '*.cpp' '*.hpp' | xargs clang-format -i
 | `wt -h`, `wt --help` | Print help and exit. |
 | `wt -V`, `wt --version` | Print the version (e.g. `wt 0.1.0`) and exit. |
 | `wt list` | List every worktree of the current repository with its branch, status, and path. |
+| `wt list --json` | The same, as JSON for agents and scripts (see [JSON output](#json-output)). |
 | `wt new <task>` | Create branch `<task>` from the integration branch in a new worktree, and print its path. |
 | `wt status <task>` | Summarize the task's worktree: HEAD, uncommitted changes, and commits ahead of or behind the integration branch. |
+| `wt status <task> --json` | The same, as JSON for agents and scripts. |
 | `wt merge <task>` | Merge the task's branch into the integration branch, following Git's merge settings; on a conflict, abort and list the conflicting files. |
 | `wt merge <task> --cleanup` | Merge the task, then remove its worktree and delete its branch once it's proven to have landed. |
 | `wt remove <task>` | Remove the task's worktree if nothing uncommitted would be lost. The branch is kept. |
@@ -102,6 +104,53 @@ Git cleans up its lock files, but may leave an operation in progress, such as a 
 The next `wt merge` or `wt remove` then refuses that worktree; inspect it with `git status`, finish or abort any operation with Git, then rerun.
 If `wt merge --cleanup` is interrupted after the task has landed, rerunning it finishes the cleanup, or explains what is left to deal with first.
 
+### JSON output
+
+`wt list --json` and `wt status <task> --json` print the same information as their tables, as JSON for agents and scripts.
+The field names and meanings below are part of `wt`'s interface: new fields may be added, so consumers should ignore ones they don't know, but existing ones won't be renamed or change meaning.
+
+- On success, stdout is exactly one compact JSON document on one line, followed by a newline.
+- On failure, stdout is empty; the exit code and stderr say why, as for any command.
+- Warnings, such as a worktree whose status can't be read, go to stderr and never into the JSON.
+- Paths are absolute and exactly as Git reports them: never shortened to `~`, and with control characters escaped rather than replaced.
+- Strings are UTF-8. A branch name or path that isn't valid UTF-8 can't be represented, so the command fails (exit 1) rather than print a different one.
+- Fields with nothing to report are `null` rather than left out.
+
+The other commands have no `--json`: `wt new` prints only the new worktree's path on stdout, and `wt merge` and `wt remove` report their outcome through the exit code and the first line on stderr.
+
+**`wt list --json`** prints an object with a `worktrees` array, main worktree first, then in Git's order:
+
+```json
+{"worktrees":[{"path":"/Users/me/Dev/worktree-manager","branch":"main","head":"5f749c1…","status":"clean","operation":null,"current":true,"detached":false,"locked":false}]}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `path` | The worktree's absolute path. |
+| `branch` | The branch checked out, e.g. `feature/x`, or the branch being rebased there, since a rebase detaches HEAD until it finishes; `null` if otherwise detached, or bare. |
+| `head` | The full commit id checked out; `null` for a bare repository or a branch with no commits. |
+| `status` | `clean`, `dirty`, `missing`, `unknown`, or `bare`, as in [`wt list`](#wt-list). |
+| `operation` | The operation Git has stopped in the middle of: `merge`, `rebase`, `am`, `cherry-pick`, `revert`, `cherry-pick-or-revert`, or `bisect`; `unknown` if `wt` can't tell (a warning says why); `null` if none, or the status is `missing`, `unknown`, or `bare`. |
+| `current` | Whether you're running `wt` from this worktree or a directory inside it. |
+| `detached` | Whether Git has HEAD detached, i.e. a commit rather than a branch checked out; true during a rebase. |
+| `locked` | Whether the worktree is locked (`git worktree lock`). |
+
+**`wt status <task> --json`** prints one object:
+
+```json
+{"branch":"feature-x","path":"/Users/me/Dev/.worktree-manager.wt-a13f92c4/feature-x","head":"3f2a9c1…","status":"dirty","operation":null,"changes":{"staged":1,"modified":2,"untracked":0,"conflicts":0},"integration":{"branch":"main","ahead":3,"behind":1}}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `branch` | The task's branch, as given. |
+| `path` | The worktree's absolute path. |
+| `head` | The full commit id checked out; `null` for a branch with no commits. |
+| `status` | `clean`, `dirty`, or `missing`, as in [`wt list`](#wt-list). If the status can't be read, the command fails instead. |
+| `operation` | As for `wt list --json`, except that if `wt` can't tell, the command fails instead. |
+| `changes` | `staged`, `modified`, `untracked`, and `conflicts`, counted as in [`wt status`](#wt-status-task); `null` when the worktree is missing. |
+| `integration` | The integration branch's name as `branch`, and `ahead` and `behind` counts against it; `null` for the integration branch itself, a branch with no commits, or when there is no integration branch (a warning says why). |
+
 ### `wt list`
 
 Works from the main checkout or any linked worktree, and always lists the main worktree first.
@@ -133,6 +182,7 @@ If `wt` can't tell, it shows `(operation unknown)` and warns on stderr.
 Checking status never modifies a worktree: `wt` runs `git status` with `--no-optional-locks`, so it won't touch the index or contend with other Git processes.
 Untracked files always count, even if `status.showUntrackedFiles` is set to `no`.
 `wt list` fails with a Git error (exit 4) outside a Git repository.
+For scripts, `wt list --json` prints the same as [JSON](#json-output).
 
 ### `wt new <task>`
 
@@ -240,7 +290,7 @@ If there is no integration branch, `wt status` warns and leaves them out.
 If the worktree's directory is gone, the status is `missing` and the change counts are left out; ahead and behind still show, since they only depend on the branch.
 A warning says how to recover: `git worktree repair <new-path>` if the directory was moved, otherwise `wt remove <task> --forget-missing`.
 If the worktree is locked (e.g. it lives on a removable drive), the warning says Git keeps its record until it is unlocked.
-If the status can't be read, `wt status` prints what it can and exits 1.
+If the status can't be read, `wt status` prints what it can and exits 1 (with `--json`, it prints nothing on stdout).
 It also exits 1 if no worktree has the branch checked out.
 
 ### `wt merge <task>`
@@ -445,7 +495,7 @@ src/
   commands/           # CLI definition and command handlers; commands take a wt::Context
   git/                # runs git and parses its output
   layout/             # where wt puts worktrees: task names and the owned container
-  ui/                 # terminal output helpers (tables, path display)
+  ui/                 # output helpers (tables, path display, JSON)
 tests/
   unit/               # Catch2 unit tests
   e2e/                # Catch2 tests that drive the built binary

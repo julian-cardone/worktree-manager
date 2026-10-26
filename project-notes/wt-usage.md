@@ -24,3 +24,4 @@ The refusal is intended, but it makes the flag routine, which weakens it as a gu
 - `error-says-what-changed`: `src/commands/merge.cpp` `land` conflicted with `cd546e5`, which added a `before` argument to the `merge_problem` call this task wrapped in a try/catch; kept both.
 - `status-show-operations`: `project-notes/findings.md` conflicted with `b9a041e`, which added its Addressed entry in the same place; kept both.
 - `merge-refuse-merge-options`: `project-notes/findings.md` conflicted with `b9a041e` and `2e42478`, which moved the other two findings from Open to Addressed; kept all three.
+- `list-status-json`: `src/commands/list.cpp` and `src/commands/status.cpp` conflicted with `2e42478`, which added operation and rebasing state to both commands while this task split them into shared data plus table and JSON output; kept `main`'s behavior and added the new state to the JSON.

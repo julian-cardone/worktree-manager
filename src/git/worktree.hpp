@@ -89,12 +89,36 @@ std::optional<std::filesystem::path> rebasing_worktree(
 // rebase state can't be read.
 std::optional<std::string> rebased_branch(const Worktree& worktree);
 
-// The operation Git has stopped in the middle of in the worktree at `dir`,
-// e.g. "a merge" or "a git am", or nothing. These can leave the files clean,
-// so a clean status alone doesn't mean the worktree is idle. Throws a refused
-// wt::Error if that can't be determined.
+// An operation Git can stop in the middle of.
+enum class Operation {
+    merge,
+    rebase,
+    am,
+    cherry_pick,
+    revert,
+    // A cherry-pick or revert of several commits, between steps; Git's state
+    // doesn't say which.
+    sequencer,
+    bisect,
+};
+
+// The operation Git has stopped in the middle of in the worktree at `dir`, or
+// nothing. These can leave the files clean, so a clean status alone doesn't
+// mean the worktree is idle. Throws a refused wt::Error if that can't be
+// determined.
+std::optional<Operation> current_operation(const std::filesystem::path& dir);
+
+// current_operation, described for messages, e.g. "a merge" or "a git am".
 std::optional<std::string> operation_in_progress(
     const std::filesystem::path& dir);
+
+// How messages name an operation, e.g. "a git am".
+std::string_view describe(Operation operation);
+
+// An operation's name in wt's JSON output, e.g. "am".
+// WARNING: part of wt's interface, documented in README.md; agents and scripts
+// branch on these. Don't rename them.
+std::string_view operation_name(Operation operation);
 
 // Reports whether the worktree has uncommitted changes, including untracked
 // files, and counts them; with `count_ignored`, also lists ignored files.
@@ -114,5 +138,14 @@ std::vector<std::string> hidden_changes(const std::filesystem::path& dir);
 
 // How wt shows a status, e.g. "dirty"; "-" for a bare repository.
 std::string_view status_label(Status status);
+
+// A status's name in wt's JSON output, e.g. "bare".
+// WARNING: part of wt's interface, documented in README.md; agents and scripts
+// branch on these. Don't rename them.
+std::string_view status_name(Status status);
+
+// The commit the worktree has checked out, or nothing for a bare repository or
+// a branch with no commits yet.
+std::optional<std::string> head_commit(const Worktree& worktree);
 
 }  // namespace wt::git
