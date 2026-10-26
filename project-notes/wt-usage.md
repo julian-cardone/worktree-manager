@@ -22,3 +22,4 @@ The refusal is intended, but it makes the flag routine, which weakens it as a gu
 - `git-locale-independence`: `src/git/worktree.cpp` conflicted with `c125008`, which landed the same exit-code-129 change in parallel; kept `main`'s version and reapplied only the SIGHUP guard.
 - `interrupted-operation-guidance`: `src/commands/merge.cpp` `check_destination` conflicted with `cb30563`, which added a checked-out-branch check where this task reordered the operation and dirty checks; kept both, branch check first.
 - `error-says-what-changed`: `src/commands/merge.cpp` `land` conflicted with `cd546e5`, which added a `before` argument to the `merge_problem` call this task wrapped in a try/catch; kept both.
+- `status-show-operations`: `project-notes/findings.md` conflicted with `b9a041e`, which added its Addressed entry in the same place; kept both.

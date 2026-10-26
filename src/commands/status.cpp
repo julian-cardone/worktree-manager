@@ -49,12 +49,39 @@ void report_missing(const Context& ctx, const git::Worktree& worktree,
             << " --forget-missing` makes Git forget it and keeps the branch\n";
 }
 
+// The worktree for `task`: the one with its branch checked out or, since a
+// rebase detaches HEAD until it finishes, the one rebasing it.
+const git::Worktree& find_status_worktree(
+    const Context& ctx, const std::vector<git::Worktree>& worktrees,
+    const std::string& task) {
+    if (const auto* found = find_branch_worktree(worktrees, task)) {
+        return *found;
+    }
+    if (git::is_valid_branch_name(ctx.repo, task)) {
+        if (const auto where = git::rebasing_worktree(
+                worktrees, git::common_dir(ctx.repo), task)) {
+            for (const auto& worktree : worktrees) {
+                if (git::same_path(worktree.path, *where) &&
+                    git::rebased_branch(worktree) == task) {
+                    return worktree;
+                }
+            }
+            // `git rebase --update-refs` there will move it.
+            throw Error(ErrorKind::user,
+                        "branch '" + task +
+                            "' isn't checked out in any worktree, but a "
+                            "rebase in " +
+                            where->string() + " will move it when it finishes");
+        }
+    }
+    return find_task_worktree(ctx.repo, worktrees, task);
+}
+
 }  // namespace
 
 int status_command(const Context& ctx, const std::string& task) {
     const auto worktrees = git::list_worktrees(ctx.repo);
-    const git::Worktree& worktree =
-        find_task_worktree(ctx.repo, worktrees, task);
+    const git::Worktree& worktree = find_status_worktree(ctx, worktrees, task);
     // Git reports an all-zero HEAD for a branch with no commits yet.
     const bool unborn =
         worktree.head.find_first_not_of('0') == std::string::npos;
@@ -67,8 +94,23 @@ int status_command(const Context& ctx, const std::string& task) {
                 : ui::printable(git::commit_summary(ctx.repo, worktree.head))},
         {"Status:", std::string(git::status_label(status.status))},
     };
-    if (status.status == git::Status::clean ||
-        status.status == git::Status::dirty) {
+    const bool readable = status.status == git::Status::clean ||
+                          status.status == git::Status::dirty;
+    // An operation can leave the files clean, so the status alone doesn't
+    // say the worktree is idle; `wt merge` and `wt remove` refuse it.
+    std::optional<std::string> operation_unknown;
+    if (readable) {
+        try {
+            if (const auto operation =
+                    git::operation_in_progress(worktree.path)) {
+                rows.push_back({"In progress:", *operation});
+            }
+        } catch (const Error& e) {
+            operation_unknown = e.what();
+            rows.push_back({"In progress:", "unknown"});
+        }
+    }
+    if (readable) {
         const auto& changes = status.changes;
         rows.push_back({"Staged:", std::to_string(changes.staged)});
         rows.push_back({"Modified:", std::to_string(changes.modified)});
@@ -98,6 +140,11 @@ int status_command(const Context& ctx, const std::string& task) {
         ctx.err << error_prefix(ErrorKind::user) << "cannot read the status of "
                 << ui::printable(worktree.path.string()) << ": "
                 << ui::printable(status.detail) << '\n';
+        return exit_code(ErrorKind::user);
+    }
+    if (operation_unknown) {
+        ctx.err << error_prefix(ErrorKind::user)
+                << ui::printable(*operation_unknown) << '\n';
         return exit_code(ErrorKind::user);
     }
     return 0;

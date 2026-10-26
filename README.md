@@ -113,7 +113,10 @@ Paths under your home directory are shown with `~`.
 * main                clean   ~/Dev/worktree-manager
   feature/x           dirty   ~/Dev/.worktree-manager.wt-a13f92c4/feature-x
   (detached 9744289)  clean   ~/Dev/experiment
+  (rebasing fix-ui)   dirty (rebase)  ~/Dev/.worktree-manager.wt-a13f92c4/fix-ui
 ```
+
+A rebase detaches HEAD until it finishes, so a worktree in the middle of one is shown as `(rebasing <branch>)` rather than detached.
 
 | Status | Meaning |
 | --- | --- |
@@ -122,6 +125,10 @@ Paths under your home directory are shown with `~`.
 | `missing` | Nothing exists at the worktree's path any more. Git still tracks it; `wt status <task>` explains how to reconnect or forget it. |
 | `unknown` | The status couldn't be read, e.g. a file or dangling symlink replaced the directory; a warning on stderr explains why. |
 | `-` | A bare repository, which has no working files. |
+
+`clean` or `dirty` is followed by the operation Git has stopped in the middle of, if any: `(merge)`, `(rebase)`, `(git am)`, `(cherry-pick)`, `(revert)`, `(cherry-pick or revert)`, or `(bisect)`.
+These can leave the files clean, and `wt merge` and `wt remove` refuse a worktree in the middle of one.
+If `wt` can't tell, it shows `(operation unknown)` and warns on stderr.
 
 Checking status never modifies a worktree: `wt` runs `git status` with `--no-optional-locks`, so it won't touch the index or contend with other Git processes.
 Untracked files always count, even if `status.showUntrackedFiles` is set to `no`.
@@ -212,11 +219,14 @@ Behind main:  1
 ```
 
 Finds the worktree that has branch `<task>` checked out, so it also works for worktrees `wt` didn't create, including the main checkout.
+While `<task>` is being rebased, its HEAD is detached, so `wt status` finds the worktree rebasing it instead.
+If `<task>` is only going to be moved by a `git rebase --update-refs` in another worktree, it says so and exits 1.
 It gives the same answer from any worktree of the repository.
 
 | Field | Meaning |
 | --- | --- |
 | `Status` | As in `wt list`. |
+| `In progress` | The operation Git has stopped in the middle of, e.g. `a rebase` or `a bisect`; only shown when there is one. If `wt` can't tell, it shows `unknown`, says why, and exits 1. |
 | `Staged` | Files with changes in the index. |
 | `Modified` | Tracked files with changes not yet staged. A file with both staged and unstaged changes counts in both. |
 | `Untracked` | Untracked files, as `git status` lists them: an untracked directory counts once. Ignored files don't count. |

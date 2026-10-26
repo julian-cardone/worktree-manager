@@ -157,6 +157,52 @@ TEST_CASE("wt list warns when a worktree's status can't be read") {
                                  broken.string()));
 }
 
+TEST_CASE("wt list shows operations in progress") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path rebasing = wt_new(box, repo, "feature");
+    commit_file(box, rebasing, "a.txt", "task\n");
+    commit_file(box, repo, "a.txt", "main\n");
+    REQUIRE(run_in(box, rebasing, {find_on_path("git"), "rebase", "-q", "main"})
+                .code != 0);
+    const fs::path bisecting = wt_new(box, repo, "other");
+    git(box, bisecting, {"bisect", "start"});
+    const fs::path detached = box.work() / "detached";
+    git(box, repo,
+        {"worktree", "add", "-q", "--detach", detached.string(), "main"});
+
+    auto r = run_wt(box, repo, {"list"});
+    CHECK(r.code == 0);
+    CHECK(r.err.empty());
+    // A rebase detaches HEAD, but the worktree is still the task's.
+    CHECK_THAT(row_for(r.out, rebasing.string()),
+               StartsWith("  (rebasing feature)  dirty (rebase)  "));
+    CHECK_THAT(row_for(r.out, bisecting.string()),
+               StartsWith("  other               clean (bisect)  "));
+    CHECK_THAT(
+        row_for(r.out, detached.string()),
+        StartsWith("  (detached " +
+                   git_output(box, repo, {"rev-parse", "--short=7", "main"}) +
+                   ")  clean  "));
+}
+
+TEST_CASE("wt list doesn't call a worktree idle when it can't tell") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const Env failing =
+        git_shim(box,
+                 "case \" $* \" in *' --git-path rebase-merge '*) "
+                 "echo 'fatal: simulated failure' >&2; exit 128;; esac\n");
+
+    auto r = run_wt(box, repo, {"list"}, failing);
+    CHECK(r.code == 0);
+    CHECK_THAT(row_for(r.out, repo.string()),
+               StartsWith("* main    clean (operation unknown)  "));
+    CHECK(r.err == "wt: warning: cannot check whether " + repo.string() +
+                       " is in the middle of an operation: simulated "
+                       "failure\n");
+}
+
 TEST_CASE("wt list doesn't call a path with something else at it missing") {
     Sandbox box;
     const fs::path repo = make_repo(box, box.work() / "repo");

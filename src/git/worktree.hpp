@@ -82,6 +82,13 @@ std::optional<std::filesystem::path> rebasing_worktree(
     const std::vector<Worktree>& worktrees, const std::filesystem::path& common,
     std::string_view branch);
 
+// The branch (a short name) an interrupted rebase in `worktree` is rewriting,
+// or nothing if no rebase is in progress there or it is rebasing a detached
+// HEAD. A rebase detaches HEAD until it finishes, so this is how to tell
+// which branch the worktree is working on. Throws a refused wt::Error if the
+// rebase state can't be read.
+std::optional<std::string> rebased_branch(const Worktree& worktree);
+
 // The operation Git has stopped in the middle of in the worktree at `dir`,
 // e.g. "a merge" or "a git am", or nothing. These can leave the files clean,
 // so a clean status alone doesn't mean the worktree is idle. Throws a refused

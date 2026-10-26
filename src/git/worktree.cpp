@@ -325,6 +325,28 @@ std::optional<fs::path> rebasing_worktree(
     return std::nullopt;
 }
 
+std::optional<std::string> rebased_branch(const Worktree& worktree) {
+    constexpr std::string_view kHeads = "refs/heads/";
+    // The two directories rebase keeps its state in, depending on backend.
+    for (const char* state : {"rebase-merge", "rebase-apply"}) {
+        // One path per query, as in operation_in_progress.
+        const Result r =
+            run(worktree.path,
+                {"rev-parse", "--git-path", std::string(state) + "/head-name"});
+        if (r.exit_code != 0) {
+            throw wt::Error(
+                ErrorKind::refused,
+                "cannot check whether " + worktree.path.string() +
+                    " is in the middle of a rebase: " + error_message(r.err));
+        }
+        const auto ref = read_first_line(worktree.path / single_value(r.out));
+        if (ref && ref->starts_with(kHeads)) {
+            return ref->substr(kHeads.size());
+        }
+    }
+    return std::nullopt;
+}
+
 // WARNING: Git keeps most of this state as files, not refs, and `git am` and
 // a cherry-pick or revert between steps leave the branch checked out and the
 // files clean. Reads the paths Git itself checks, as `git status` does.

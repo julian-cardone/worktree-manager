@@ -258,6 +258,98 @@ TEST_CASE("wt status sanitizes commit subjects") {
     CHECK(r.out.find('\x1b') == std::string::npos);
 }
 
+TEST_CASE("wt status finds a task's worktree while it is being rebased") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature");
+    commit_file(box, path, "a.txt", "task\n");
+    commit_file(box, repo, "a.txt", "main\n");
+    // Stops at the conflict, with HEAD detached until the rebase finishes.
+    REQUIRE(
+        run_in(box, path, {find_on_path("git"), "rebase", "-q", "main"}).code !=
+        0);
+
+    auto r = run_wt(box, repo, {"status", "feature"});
+    CHECK(r.code == 0);
+    CHECK(r.err.empty());
+    CHECK(field(r.out, "Path:") == "Path:         " + path.string());
+    CHECK(field(r.out, "Status:") == "Status:       dirty");
+    CHECK(field(r.out, "In progress:") == "In progress:  a rebase");
+    CHECK(field(r.out, "Conflicts:") == "Conflicts:    1");
+    // Still measured from the branch, which keeps its old commits until then.
+    CHECK(field(r.out, "Ahead main:") == "Ahead main:   1");
+}
+
+TEST_CASE("wt status says a rebase elsewhere will move the branch") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature");
+    commit_file(box, path, "a.txt", "a\n");
+    const fs::path top = wt_new(box, repo, "top");
+    git(box, top, {"rebase", "-q", "feature"});
+    commit_file(box, top, "t.txt", "t\n");
+    // --update-refs leaves alone branches checked out elsewhere.
+    git(box, repo, {"worktree", "remove", path.string()});
+    commit_file(box, repo, "b.txt", "b\n");
+    REQUIRE(run_in(box, top,
+                   {find_on_path("git"), "rebase", "-q", "--update-refs",
+                    "--exec", "false", "main"})
+                .code != 0);
+
+    auto r = run_wt(box, repo, {"status", "feature"});
+    CHECK(r.code == 1);
+    CHECK(r.out.empty());
+    CHECK(r.err ==
+          "wt: error: branch 'feature' isn't checked out in any "
+          "worktree, but a rebase in " +
+              top.string() + " will move it when it finishes\n");
+
+    // The worktree rebasing top is still top's.
+    r = run_wt(box, repo, {"status", "top"});
+    CHECK(r.code == 0);
+    CHECK(field(r.out, "Path:") == "Path:         " + top.string());
+    CHECK(field(r.out, "In progress:") == "In progress:  a rebase");
+}
+
+TEST_CASE("wt status shows an operation that left the files clean") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature");
+    std::string operation;
+
+    SECTION("bisect") {
+        git(box, path, {"bisect", "start"});
+        operation = "a bisect";
+    }
+    SECTION("git am") {
+        stop_git_am(box, path);
+        operation = "a git am";
+    }
+
+    auto r = run_wt(box, repo, {"status", "feature"});
+    CHECK(r.code == 0);
+    CHECK(field(r.out, "Status:") == "Status:       clean");
+    CHECK(field(r.out, "In progress:") == "In progress:  " + operation);
+}
+
+TEST_CASE("wt status fails when it can't tell whether an operation is on") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature");
+    const Env failing =
+        git_shim(box,
+                 "case \" $* \" in *' --git-path rebase-merge '*) "
+                 "echo 'fatal: simulated failure' >&2; exit 128;; esac\n");
+
+    auto r = run_wt(box, repo, {"status", "feature"}, failing);
+    CHECK(r.code == 1);
+    CHECK(field(r.out, "Status:") == "Status:       clean");
+    CHECK(field(r.out, "In progress:") == "In progress:  unknown");
+    CHECK(r.err == "wt: error: cannot check whether " + path.string() +
+                       " is in the middle of an operation: simulated "
+                       "failure\n");
+}
+
 TEST_CASE("wt status outside a repository fails with a clear error") {
     Sandbox box;
     auto r = run_wt(box, box.work(), {"status", "feature"});

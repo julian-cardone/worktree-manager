@@ -11,16 +11,17 @@ With it set to `-Xours` on the integration branch, a conflicting task merged wit
 `wt merge` must refuse while that setting is active rather than override it, since `wt` can't guarantee conflicts stay manual under it.
 Custom merge drivers in `.gitattributes` are repository policy and out of scope.
 
-### `wt status` and `wt list` misdescribe worktrees mid-operation
-
-During a stopped `git rebase` in a task's worktree, `wt status <task>` said the branch "isn't checked out in any worktree", and `wt list` showed only a detached HEAD.
-A worktree mid-bisect, cherry-pick, or `git am` showed `Status: clean` with no mention of the operation, although `wt merge` and `wt remove` refuse it.
-The reads should use what `rebasing_worktree` and `operation_in_progress` already know.
-
 ## Addressed
 
 Findings `wt` now handles.
 Each explains why a check or rule exists; keep it while that check or rule does, and revisit it before relaxing one.
+
+### `wt status` and `wt list` misdescribed worktrees mid-operation
+
+During a stopped `git rebase` in a task's worktree, `wt status <task>` said the branch "isn't checked out in any worktree", and `wt list` showed only a detached HEAD.
+A worktree mid-bisect, cherry-pick, or `git am` showed `Status: clean` with no mention of the operation, although `wt merge` and `wt remove` refuse it.
+`wt status` now finds the worktree whose rebase is rewriting the task (`rebasing_worktree`, confirmed by that worktree's own `git::rebased_branch`), and says when a `--update-refs` rebase elsewhere will only move it.
+Both commands show `operation_in_progress`; when it can't be read, they show the state as unknown rather than leave a bare `clean`.
 
 ### `git worktree remove` deletes edits Git has been told not to look at
 
