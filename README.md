@@ -1,16 +1,29 @@
 # wt
 
 `wt` is a small C++ CLI that takes the friction out of managing Git worktrees when you (and agents like Claude or Codex) are working on several things at once.
+Each task gets its own branch and worktree, so tasks can run side by side without stashing or switching branches, and then land on the integration branch and get cleaned up safely.
 
-> Status: early development.
-> `wt list`, `wt new`, `wt status`, `wt merge`, and `wt remove` work; switching worktrees is not implemented yet.
+`wt` owns the worktree lifecycle: creating, listing, inspecting, merging, and removing task worktrees, and the branch cleanup that goes with them.
+It is not a Git replacement.
+Staging, committing, rebasing, diffs, history, and everything else stay with Git, and `wt` never fetches, pushes, or changes remote branches.
+
+`wt` runs on macOS and Linux.
+Windows is not supported.
 
 ## Requirements
 
+To run `wt`:
+
+- macOS or Linux
+- Git 2.36 or newer on `PATH`
+
+To build it from source, also:
+
 - A C++20 compiler (Apple Clang 15+, GCC 11+, or Clang 15+)
 - CMake 3.24+
-- Git 2.36+ on `PATH` at runtime
-- Network access on first configure (dependencies are fetched by CMake)
+- Network access on the first configure, which fetches the dependencies
+
+On macOS, `wt` links the system's iconv library, which every macOS install includes; nothing else needs installing.
 
 Dependencies are pinned to release archives, verified by SHA256, and fetched automatically via CMake `FetchContent`:
 
@@ -19,39 +32,52 @@ Dependencies are pinned to release archives, verified by SHA256, and fetched aut
 | [CLI11](https://github.com/CLIUtils/CLI11) | 2.4.2 | Argument parsing |
 | [Catch2](https://github.com/catchorg/Catch2) | 3.7.1 | Tests |
 
-## Building
-
-```sh
-cmake -S . -B build          # configure (add -DCMAKE_BUILD_TYPE=Release for an optimized build)
-cmake --build build -j       # build; produces ./build/wt
-```
-
-Pass `-DWT_BUILD_TESTS=OFF` at configure time to skip building the tests (and fetching Catch2).
-
 ## Installing
 
-Install `wt` into `~/.local/bin`, which needs no administrator rights:
+Both ways install a single file, `bin/wt`, under a prefix of your choice.
+The examples use `~/.local`, which needs no administrator rights.
+
+### From a release binary
+
+Each [GitHub Release](https://github.com/julian-cardone/worktree-manager/releases) has a prebuilt binary for macOS on Apple silicon (`macos-arm64`) and Linux on x86_64 (`linux-x86_64`), plus a `SHA256SUMS` file:
 
 ```sh
+version=0.1.0
+platform=macos-arm64    # or linux-x86_64
+base=https://github.com/julian-cardone/worktree-manager/releases/download/v$version
+curl -fLO "$base/wt-$version-$platform.tar.gz"
+curl -fLO "$base/SHA256SUMS"
+shasum -a 256 --check --ignore-missing SHA256SUMS    # on Linux: sha256sum --check --ignore-missing SHA256SUMS
+mkdir -p ~/.local
+tar -xzf "wt-$version-$platform.tar.gz" --strip-components=1 -C ~/.local
+wt --version
+```
+
+Each archive contains only `wt-<version>-<platform>/bin/wt`, so this installs `~/.local/bin/wt`.
+The macOS binary isn't notarized; downloading with `curl` as above avoids the quarantine flag a browser download would add, which makes macOS block it.
+The binaries are built on macOS 15 and Ubuntu 24.04 and use the system's C and C++ runtime libraries, so they may not run on older versions.
+On other platforms, such as Intel Macs or ARM Linux, build from source.
+
+To update, install the newer archive the same way; it replaces the old binary.
+To uninstall, delete the binary: `rm ~/.local/bin/wt`.
+
+### From source
+
+```sh
+git clone https://github.com/julian-cardone/worktree-manager.git
+cd worktree-manager
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 cmake --install build --prefix "$HOME/.local"
 ```
 
-The only file installed is `<prefix>/bin/wt`.
 Any prefix works; without `--prefix`, CMake uses `/usr/local`, which usually needs `sudo`.
 Quote a prefix that contains spaces.
-
-If the install directory isn't on your `PATH`, the install says so.
-Add it in your shell profile (for example `~/.zshrc` or `~/.bashrc`), then open a new shell:
-
-```sh
-export PATH="$HOME/.local/bin:$PATH"
-```
+Release binaries are built and tested with these same commands from the release's tag (see [Releases](#releases)), so building a tag from source gives the same version of `wt`.
 
 To update, pull, then rerun the build and install commands; the new binary replaces the old one.
 
-### Uninstalling
+To uninstall:
 
 ```sh
 cmake --build build --target uninstall
@@ -62,83 +88,44 @@ It never removes directories or anything else in the prefix.
 The manifest records only the most recent install from that build directory, so if you installed to more than one prefix, delete the copies the manifest doesn't list by hand, e.g. `rm "$HOME/.local/bin/wt"`.
 The same applies if the build directory has since been deleted.
 
-## Testing
+### Adding `wt` to `PATH`
+
+A source install says so if the install directory isn't on your `PATH`.
+Add it in your shell profile (for example `~/.zshrc` or `~/.bashrc`), then open a new shell:
 
 ```sh
-ctest --test-dir build --output-on-failure
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
-Every test runs in its own sandbox, so the suite can run in parallel with `-j`.
+## Quick start
 
-Tests live in `tests/`:
-
-- `tests/unit/` — in-process tests against the `wt_core` library, each given a throwaway temp directory as its working directory.
-- `tests/e2e/` — run the real `build/wt` binary as a subprocess and check its output and exit code.
-  Each run happens in a throwaway temp directory with its own `HOME` and Git config, so tests can't touch your real repositories.
-  Tests are grouped by command in `test_<command>.cpp`; `test_cli.cpp` and `test_repository.cpp` cover behavior common to all commands.
-  Helpers shared between those files live in `tests/support/e2e.hpp`.
-- `tests/install/` — installs the built binary into a throwaway prefix inside the build directory, runs it, and uninstalls it; also checks that uninstall refuses unsafe manifest entries.
-
-Each suite can also be run directly, e.g. `./build/tests/wt_unit_tests` or `./build/tests/wt_e2e_tests`.
-
-## Formatting
-
-Code style is defined in `.clang-format`.
-Format all sources with:
+Run `wt` from anywhere inside a Git repository: the main checkout or any of its worktrees.
 
 ```sh
-git ls-files -z '*.cpp' '*.hpp' | xargs -0 clang-format -i
+cd "$(wt new fix-login)"           # new branch fix-login from the integration branch, in its own worktree
+# ...edit, then commit with Git as usual...
+wt list                            # every worktree, with its branch and whether it has uncommitted changes
+wt status fix-login                # uncommitted changes, and commits ahead of or behind the integration branch
+cd -                               # back to the main checkout
+wt merge fix-login --cleanup       # land it, then remove its worktree and delete its branch
 ```
 
-Check formatting without changing files:
+`wt new` prints only the new worktree's path on stdout, so it composes with `cd`.
+Worktrees are created in a hidden folder next to the main checkout (see [`wt new`](#wt-new-task)).
+The integration branch is usually `main`; [`wt new`](#wt-new-task) explains how `wt` chooses it.
 
-```sh
-git ls-files -z '*.cpp' '*.hpp' | xargs -0 clang-format --dry-run --Werror
-```
+`--cleanup` refuses to remove the worktree you're running it from, so run it from another worktree.
+Without `--cleanup`, `wt merge fix-login` lands the task and keeps its worktree and branch.
+`wt remove fix-login` removes the worktree without merging, and always keeps the branch.
+Both refuse rather than delete uncommitted work, and say what is in the way.
 
-## Continuous integration
+To keep the integration branch's history linear, set `git config merge.ff only`; `wt merge` then refuses a task that is behind and prints the `git rebase` command to bring it up to date.
 
-GitHub Actions (`.github/workflows/ci.yml`) runs the commands above on every push to `main` and every pull request.
-It configures, builds, and runs the full test suite on Linux and macOS, and checks formatting with clang-format 23.
-The tests need no Git setup on the runner, since they never read its Git config.
-
-## Releasing
-
-The version has one source: `project(wt VERSION ...)` in `CMakeLists.txt`, which `wt --version` reports.
-
-To release, land a commit that sets the new version on `main`, then tag that commit and push the tag:
-
-```sh
-git tag -a v0.1.0 -m "wt 0.1.0"
-git push origin v0.1.0
-```
-
-Pushing a tag of the form `vX.Y.Z` runs `.github/workflows/release.yml`, which publishes a GitHub Release only if:
-
-- the tagged commit is on `main`;
-- the Release build passes the full test suite on Linux and macOS;
-- the built binary reports exactly the tagged version;
-- no release for the tag exists yet; an existing one is never modified.
-
-The release attaches one archive per platform, named `wt-<version>-<os>-<arch>.tar.gz` (e.g. `wt-0.1.0-macos-arm64.tar.gz`), and a `SHA256SUMS` file.
-Each archive contains only `wt-<version>-<os>-<arch>/bin/wt`, so `tar -xzf <archive> --strip-components=1 -C "$HOME/.local"` installs it as `~/.local/bin/wt`.
-The archives are built on the same Ubuntu 24.04 (x86_64) and macOS 15 (arm64) runners as CI.
-
-The workflow builds each archive with a script you can also run locally:
-
-```sh
-scripts/package-release.sh     # configure, build, and test in build-release/, then package
-```
-
-It prints the archive's path, e.g. `build-release/wt-0.1.0-macos-arm64.tar.gz`.
-`build-release/` is for packaging only; install from your usual build directory instead, since packaging removes `build-release/install_manifest.txt`.
-
-## Usage
+## Commands
 
 | Command | Description |
 | --- | --- |
-| `wt` | Print help. |
-| `wt -h`, `wt --help` | Print help and exit. |
+| `wt`, `wt -h`, `wt --help` | Print help. |
 | `wt -V`, `wt --version` | Print the version (e.g. `wt 0.1.0`) and exit. |
 | `wt list` | List every worktree of the current repository with its branch, status, and path. |
 | `wt list --json` | The same, as JSON for agents and scripts (see [JSON output](#json-output)). |
@@ -147,11 +134,51 @@ It prints the archive's path, e.g. `build-release/wt-0.1.0-macos-arm64.tar.gz`.
 | `wt status <task> --json` | The same, as JSON for agents and scripts. |
 | `wt merge <task>` | Merge the task's branch into the integration branch, following Git's merge settings; on a conflict, abort and list the conflicting files. |
 | `wt merge <task> --cleanup` | Merge the task, then remove its worktree and delete its branch once it's proven to have landed. |
+| `wt merge <task> --cleanup --delete-ignored` | The same, also deleting ignored files (such as `build/`) with the worktree. |
 | `wt remove <task>` | Remove the task's worktree if nothing uncommitted would be lost. The branch is kept. |
+| `wt remove <task> --delete-ignored` | The same, also deleting ignored files with the worktree. |
 | `wt remove <task> --forget-missing` | Remove only Git's record of a worktree whose directory is gone. The branch is kept. |
 
-The version is set by `project(wt VERSION ...)` in `CMakeLists.txt`.
+`wt <command> --help` describes each command and its options.
+A `<task>` is the name of the task's branch.
 
+## Safety
+
+`wt` is built to be safe to run unattended. In particular:
+
+- **It never discards uncommitted work.**
+  `wt remove` and `wt merge --cleanup` refuse a worktree with staged, modified, untracked, or conflicted files, or with an operation such as a rebase in progress, and list what is in the way.
+  Ignored files (such as `.env` or `build/`) are deleted only if you pass `--delete-ignored`, after `wt` has listed them.
+- **It never forces.**
+  `wt` never passes `--force` to Git or resets a branch.
+  `wt remove` never deletes a branch.
+  Only `wt merge --cleanup` does, after proving the branch's tip is contained in the integration branch, and then only with `git branch -d`, so Git checks again.
+- **It never resolves conflicts.**
+  On a conflict, `wt merge` aborts the merge, checks that the integration branch is back where it was, and lists the conflicting files for you to resolve.
+- **It only removes what it created.**
+  `wt remove` refuses the main worktree, the worktree you're in, locked worktrees, and any worktree outside the folder `wt` created and verified as this repository's.
+- **It checks its work.**
+  After changing anything, `wt` reads the result back from Git and the filesystem, since a Git hook could have changed it.
+  When something fails partway, it says what it changed and what was left behind, and never claims that nothing changed once it has started.
+- **Git is the only state.**
+  `wt` keeps no database of its own; besides the worktrees, the only file it writes is the `.wt-managed` marker that records which repository owns its worktree folder.
+
+`--forget-missing` is the one way to drop a worktree without its directory, and only applies when nothing at all is left at the worktree's path, for example after deleting it by hand.
+
+## Agents and scripts
+
+Every `wt` command is non-interactive: it never prompts and never reads stdin, and the Git commands it runs get no stdin either, so they can't stop to wait for input.
+`wt` prints no color or other terminal escapes.
+
+**Output streams.**
+Results go to stdout; errors, warnings, and progress notes go to stderr.
+
+- `wt list --json` and `wt status <task> --json` print exactly one JSON document on stdout on success, and nothing on stdout on failure (see [JSON output](#json-output)).
+- `wt new <task>` prints only the new worktree's absolute path on stdout; its `wt: created branch …` note goes to stderr.
+- `wt merge` and `wt remove` print a short human-readable summary on stdout when they succeed, and have no `--json`; use the exit code to tell what happened.
+- Without `--json`, `wt list` and `wt status` print tables meant for people, with paths under your home directory shortened to `~`; parse the JSON instead.
+
+**Which repository.**
 `wt` works on the repository containing the current directory.
 If `GIT_DIR` is set, it decides which repository that is: from outside any repository, `GIT_DIR` alone names one (e.g. a bare repository of dotfiles); from inside one, it must point at the current directory's own Git directory, or `wt` refuses rather than guess.
 The Git commands `wt` runs on a particular worktree ignore `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, and similar variables, so `wt` checks the right worktree even when run from a Git hook, `git rebase --exec`, or a `!` alias.
@@ -164,8 +191,6 @@ Scripts should treat any nonzero exit code as failure, and branch on a specific 
 The message also says whether anything was changed.
 When `wt new`, `wt remove`, or `wt merge` stops before changing anything, it says so (`No branch or worktree was created.`, `Nothing was removed.`, `Nothing was merged.`).
 Once a command has started changing things, it never says that; it reports what it changed or left behind, or that it couldn't verify the result and where to look.
-Earlier builds exited 1 for every failure; the categories were introduced as a deliberate breaking change while `wt` is in early development.
-
 
 | Exit code | Prefix | Meaning | What to do |
 | --- | --- | --- | --- |
@@ -175,7 +200,7 @@ Earlier builds exited 1 for every failure; the categories were introduced as a d
 | 3 | `wt: conflict:` | A merge conflicted. `wt` aborted it; conflicts are never resolved for you. | Resolve the conflicts in the task's worktree, then rerun. |
 | 4 | `wt: git error:` | A Git command `wt` ran failed, e.g. outside a repository or when a hook fails, or Git reported success but `wt` couldn't confirm the result (a hook may have changed it). | Act on Git's message; `wt` says what, if anything, was left behind. If the result couldn't be verified, inspect the state before retrying. |
 | 5 | `wt: internal error:` | `wt` hit something it doesn't understand, such as unexpected Git output. Probably a bug in `wt`. | Check the affected worktrees with `git status` before retrying. |
-| 100+ | | The command line couldn't be parsed (from CLI11). | See `wt --help`. |
+| 100+ | | The command line couldn't be parsed (from CLI11), e.g. an unknown option. | See `wt --help`. |
 
 #### Interrupted commands
 
@@ -196,7 +221,7 @@ The field names and meanings below are part of `wt`'s interface: new fields may 
 - Strings are UTF-8. A branch name or path that isn't valid UTF-8 can't be represented, so the command fails (exit 1) rather than print a different one.
 - Fields with nothing to report are `null` rather than left out.
 
-The other commands have no `--json`: `wt new` prints only the new worktree's path on stdout, and `wt merge` and `wt remove` report their outcome through the exit code and the first line on stderr.
+The other commands have no `--json`; see [Output streams](#agents-and-scripts) for what they print.
 
 **`wt list --json`** prints an object with a `worktrees` array, main worktree first, then in Git's order:
 
@@ -230,6 +255,8 @@ The other commands have no `--json`: `wt new` prints only the new worktree's pat
 | `operation` | As for `wt list --json`, except that if `wt` can't tell, the command fails instead. |
 | `changes` | `staged`, `modified`, `untracked`, and `conflicts`, counted as in [`wt status`](#wt-status-task); `null` when the worktree is missing. |
 | `integration` | The integration branch's name as `branch`, and `ahead` and `behind` counts against it; `null` for the integration branch itself, a branch with no commits, or when there is no integration branch (a warning says why). |
+
+## Command reference
 
 ### `wt list`
 
@@ -565,7 +592,60 @@ Other stale worktrees are left alone, unlike `git worktree prune`.
 **If Git fails**, `wt remove` exits 4, shows Git's output, and says whether the worktree's directory is still there.
 After Git reports success, `wt remove` checks that Git no longer lists the worktree and its directory is gone, and exits 4 if not.
 
-## Project layout
+## Development
+
+Changes to `wt` itself follow [`AGENTS.md`](AGENTS.md).
+
+### Building
+
+```sh
+cmake -S . -B build          # configure (add -DCMAKE_BUILD_TYPE=Release for an optimized build)
+cmake --build build -j       # build; produces ./build/wt
+```
+
+Pass `-DWT_BUILD_TESTS=OFF` at configure time to skip building the tests (and fetching Catch2).
+
+### Testing
+
+```sh
+ctest --test-dir build --output-on-failure
+```
+
+Every test runs in its own sandbox, so the suite can run in parallel with `-j`.
+
+Tests live in `tests/`:
+
+- `tests/unit/` — in-process tests against the `wt_core` library, each given a throwaway temp directory as its working directory.
+- `tests/e2e/` — run the real `build/wt` binary as a subprocess and check its output and exit code.
+  Each run happens in a throwaway temp directory with its own `HOME` and Git config, so tests can't touch your real repositories.
+  Tests are grouped by command in `test_<command>.cpp`; `test_cli.cpp` and `test_repository.cpp` cover behavior common to all commands.
+  Helpers shared between those files live in `tests/support/e2e.hpp`.
+- `tests/install/` — installs the built binary into a throwaway prefix inside the build directory, runs it, and uninstalls it; also checks that uninstall refuses unsafe manifest entries.
+
+Each suite can also be run directly, e.g. `./build/tests/wt_unit_tests` or `./build/tests/wt_e2e_tests`.
+
+### Formatting
+
+Code style is defined in `.clang-format`.
+Format all sources with:
+
+```sh
+git ls-files -z '*.cpp' '*.hpp' | xargs -0 clang-format -i
+```
+
+Check formatting without changing files:
+
+```sh
+git ls-files -z '*.cpp' '*.hpp' | xargs -0 clang-format --dry-run --Werror
+```
+
+### Continuous integration
+
+GitHub Actions (`.github/workflows/ci.yml`) runs the commands above on every push to `main` and every pull request.
+It configures, builds, and runs the full test suite on Linux and macOS, and checks formatting with clang-format 23.
+The tests need no Git setup on the runner, since they never read its Git config.
+
+### Project layout
 
 ```
 CMakeLists.txt        # top-level build; produces build/wt
@@ -585,3 +665,37 @@ tests/
   support/            # shared test helpers (e.g. the temp-directory sandbox)
 .github/workflows/    # CI (build, test, format check) and tag-triggered releases
 ```
+
+## Releases
+
+The current version is 0.1.0, the first release.
+
+Release binaries are published on the [Releases page](https://github.com/julian-cardone/worktree-manager/releases), one archive per platform, named `wt-<version>-<os>-<arch>.tar.gz` (e.g. `wt-0.1.0-macos-arm64.tar.gz`), with a `SHA256SUMS` file.
+See [Installing](#from-a-release-binary) for how to install one.
+
+### Cutting a release
+
+The version has one source: `project(wt VERSION ...)` in `CMakeLists.txt`, which `wt --version` reports.
+
+To release, land a commit that sets the new version on `main`, then tag that commit and push the tag:
+
+```sh
+git tag -a v0.1.0 -m "wt 0.1.0"
+git push origin v0.1.0
+```
+
+Pushing a tag of the form `vX.Y.Z` runs `.github/workflows/release.yml`, which publishes a GitHub Release only if:
+
+- the tagged commit is on `main`;
+- the Release build passes the full test suite on Linux and macOS;
+- the built binary reports exactly the tagged version;
+- no release for the tag exists yet; an existing one is never modified.
+
+The archives are built on the same Ubuntu 24.04 (x86_64) and macOS 15 (arm64) runners as CI, with a script you can also run locally:
+
+```sh
+scripts/package-release.sh     # configure, build, and test in build-release/, then package
+```
+
+It prints the archive's path, e.g. `build-release/wt-0.1.0-macos-arm64.tar.gz`.
+`build-release/` is for packaging only; install from your usual build directory instead, since packaging removes `build-release/install_manifest.txt`.

@@ -1,6 +1,6 @@
 # Publishes a GitHub Release when a version tag (e.g. v0.1.0) is pushed.
 # Nothing is published unless every platform builds, passes the full test
-# suite, and reports exactly the tagged version. See "Releasing" in README.md.
+# suite, and reports exactly the tagged version. See "Releases" in README.md.
 name: Release
 
 on:
