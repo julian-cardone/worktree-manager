@@ -699,3 +699,7 @@ scripts/package-release.sh     # configure, build, and test in build-release/, t
 
 It prints the archive's path, e.g. `build-release/wt-0.1.0-macos-arm64.tar.gz`.
 `build-release/` is for packaging only; install from your usual build directory instead, since packaging removes `build-release/install_manifest.txt`.
+
+## License
+
+`wt` is released under the [MIT License](LICENSE).
