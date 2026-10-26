@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <fstream>
 #include <iterator>
+#include <sstream>
 #include <system_error>
 #include <utility>
 
@@ -420,6 +421,152 @@ StatusResult worktree_status(const Worktree& worktree, bool count_ignored) {
         return {Status::unknown, e.what(), {}};
     }
     return {changes.empty() ? Status::clean : Status::dirty, {}, changes};
+}
+
+namespace {
+
+// An index entry Git has been told not to check for changes.
+struct HiddenEntry {
+    std::string mode;
+    std::string object;
+    std::string path;
+};
+
+[[noreturn]] void hidden_unknown(const fs::path& dir, const std::string& why) {
+    throw wt::Error(ErrorKind::refused,
+                    "cannot check " + dir.string() +
+                        " for changes Git doesn't show: " + why);
+}
+
+// Parses `git ls-files -s -v -z`: "<tag> <mode> <object> <stage>\t<path>".
+// A lowercase tag marks assume-unchanged, 'S' skip-worktree.
+std::vector<HiddenEntry> parse_hidden_entries(const fs::path& dir,
+                                              std::string_view listing) {
+    std::vector<HiddenEntry> entries;
+    std::size_t pos = 0;
+    while (pos < listing.size()) {
+        std::size_t end = listing.find('\0', pos);
+        if (end == std::string_view::npos) {
+            end = listing.size();
+        }
+        const std::string_view entry = listing.substr(pos, end - pos);
+        pos = end + 1;
+
+        const std::size_t tab = entry.find('\t');
+        if (tab == std::string_view::npos) {
+            hidden_unknown(dir, "unexpected output from git ls-files");
+        }
+        std::istringstream fields(std::string(entry.substr(0, tab)));
+        std::string tag;
+        std::string mode;
+        std::string object;
+        std::string stage;
+        if (!(fields >> tag >> mode >> object >> stage) || tag.size() != 1) {
+            hidden_unknown(dir, "unexpected output from git ls-files");
+        }
+        const char t = tag.front();
+        // Unmerged entries (stage > 0) are reported as conflicts already.
+        const bool hidden = t == 'S' || (t >= 'a' && t <= 'z');
+        if (hidden && stage == "0") {
+            entries.push_back(
+                {mode, object, std::string(entry.substr(tab + 1))});
+        }
+    }
+    return entries;
+}
+
+// The object ids Git would give `files` (relative to `dir`) if they were
+// added, with the same filters (line endings, clean filters) as `git add`.
+// Writes nothing: hash-object only stores objects with -w.
+std::vector<std::string> hash_files(const fs::path& dir,
+                                    const std::vector<std::string>& files) {
+    // Keeps each command line well under the system's argument size limit.
+    constexpr std::size_t kBatch = 256;
+    std::vector<std::string> ids;
+    for (std::size_t first = 0; first < files.size(); first += kBatch) {
+        const std::size_t last = std::min(files.size(), first + kBatch);
+        std::vector<std::string> args = {"hash-object", "--"};
+        args.insert(args.end(), files.begin() + first, files.begin() + last);
+        const Result r = run(dir, args);
+        if (r.exit_code != 0) {
+            hidden_unknown(dir, error_message(r.err));
+        }
+        // Object ids never contain newlines, so lines line up with files.
+        std::istringstream lines(r.out);
+        for (std::string id; std::getline(lines, id);) {
+            ids.push_back(id);
+        }
+        if (ids.size() != last) {
+            hidden_unknown(dir, "unexpected output from git hash-object");
+        }
+    }
+    return ids;
+}
+
+}  // namespace
+
+// WARNING: Git skips these files when it checks a worktree for changes,
+// including in `git worktree remove`, so this is the only check between their
+// edits and deletion. A file whose content can't be compared counts as
+// changed.
+std::vector<std::string> hidden_changes(const fs::path& dir) {
+    const Result r = run(dir, {"ls-files", "-s", "-v", "-z"});
+    if (r.exit_code != 0) {
+        hidden_unknown(dir, error_message(r.err));
+    }
+    constexpr std::string_view kSymlinkMode = "120000";
+
+    std::vector<std::string> changed;
+    std::vector<const HiddenEntry*> to_hash;
+    const auto entries = parse_hidden_entries(dir, r.out);
+    for (const auto& entry : entries) {
+        const fs::path on_disk = dir / entry.path;
+        std::error_code ec;
+        const auto type = fs::symlink_status(on_disk, ec).type();
+        if (type == fs::file_type::not_found) {
+            continue;
+        }
+        if (ec) {
+            hidden_unknown(dir, "cannot inspect " + on_disk.string() + ": " +
+                                    ec.message());
+        }
+        if (type == fs::file_type::regular) {
+            // Also right for a symlink Git checked out as a file because
+            // core.symlinks is off: the file holds the link's target.
+            to_hash.push_back(&entry);
+        } else if (type == fs::file_type::symlink &&
+                   entry.mode == kSymlinkMode) {
+            // hash-object would follow the link, so compare its target.
+            const fs::path target = fs::read_symlink(on_disk, ec);
+            if (ec) {
+                hidden_unknown(dir, "cannot read " + on_disk.string() + ": " +
+                                        ec.message());
+            }
+            const Result blob = run(dir, {"cat-file", "blob", entry.object});
+            if (blob.exit_code != 0) {
+                hidden_unknown(dir, error_message(blob.err));
+            }
+            if (blob.out != target.string()) {
+                changed.push_back(entry.path);
+            }
+        } else {
+            // Not what the index has, e.g. a directory where it has a file.
+            changed.push_back(entry.path);
+        }
+    }
+
+    std::vector<std::string> paths;
+    for (const auto* entry : to_hash) {
+        paths.push_back(entry->path);
+    }
+    const auto ids = hash_files(dir, paths);
+    for (std::size_t i = 0; i < to_hash.size(); ++i) {
+        if (ids[i] != to_hash[i]->object) {
+            changed.push_back(to_hash[i]->path);
+        }
+    }
+    std::ranges::sort(changed);
+    return changed;
 }
 
 std::string_view status_label(Status status) {

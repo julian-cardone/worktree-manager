@@ -189,6 +189,29 @@ TEST_CASE(
     }
 }
 
+TEST_CASE("wt merge --cleanup refuses edits Git doesn't show before merging") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = wt_new(box, repo, "feature");
+    commit_file(box, path, "a.txt", "a\n");
+    git(box, path, {"update-index", "--assume-unchanged", "README"});
+    write_file(path / "README", "mine\n");
+    const std::string before = head_of(box, repo);
+
+    // --delete-ignored authorizes deleting ignored files only.
+    auto r = run_wt(box, repo,
+                    {"merge", "feature", "--cleanup", "--delete-ignored"});
+    CHECK(r.code == 2);
+    CHECK(r.out.empty());
+    CHECK_THAT(r.err, StartsWith("wt: refused: cannot remove feature\n\n"
+                                 "  1 modified file that Git doesn't show\n"
+                                 "    README\n"));
+    CHECK_THAT(r.err, EndsWith("Nothing was merged.\n"));
+    check_main_restored(box, repo, before);
+    CHECK(read_file(path / "README") == "mine\n");
+    CHECK(branch_exists(box, repo, "feature"));
+}
+
 TEST_CASE("wt merge accepts --delete-ignored only with --cleanup") {
     Sandbox box;
     const fs::path repo = make_repo(box, box.work() / "repo");

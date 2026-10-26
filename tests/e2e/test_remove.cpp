@@ -174,6 +174,107 @@ TEST_CASE("wt remove cuts a long list of untracked files short") {
     CHECK(read_file(path / "n11.txt") == "new\n");
 }
 
+TEST_CASE("wt remove refuses edits to files Git doesn't check for changes") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    commit_file(box, repo, "local.cfg", "shared\n");
+    fs::create_symlink("README", repo / "link");
+    git(box, repo, {"add", "link"});
+    git(box, repo, {"commit", "-q", "-m", "link"});
+    const fs::path path = wt_new(box, repo, "feature");
+    const std::string hidden_advice =
+        "Git is set not to check the files it doesn't show (assume-unchanged "
+        "or skip-worktree), but would delete them with the worktree; copy "
+        "them somewhere safe, or clear the flag with `git update-index "
+        "--no-assume-unchanged --no-skip-worktree -- <file>` and commit or "
+        "stash them.\n";
+    const std::string one_file =
+        "  1 modified file that Git doesn't show\n    local.cfg\n";
+    std::string listed;
+    std::string advice = hidden_advice;
+
+    SECTION("assume-unchanged") {
+        git(box, path, {"update-index", "--assume-unchanged", "local.cfg"});
+        write_file(path / "local.cfg", "mine\n");
+        listed = one_file;
+    }
+    SECTION("skip-worktree") {
+        git(box, path, {"update-index", "--skip-worktree", "local.cfg"});
+        write_file(path / "local.cfg", "mine\n");
+        listed = one_file;
+    }
+    SECTION("both flags, alongside an untracked file") {
+        git(box, path,
+            {"update-index", "--assume-unchanged", "--skip-worktree",
+             "local.cfg", "README"});
+        write_file(path / "local.cfg", "mine\n");
+        write_file(path / "README", "mine too\n");
+        write_file(path / "new.txt", "new\n");
+        listed =
+            "  1 untracked file\n    new.txt\n"
+            "  2 modified files that Git doesn't show\n    README\n"
+            "    local.cfg\n";
+        advice =
+            "Commit or delete the untracked files, or stash them with "
+            "`git stash -u`.\n" +
+            hidden_advice;
+    }
+    SECTION("a directory where Git has the file") {
+        git(box, path, {"update-index", "--skip-worktree", "local.cfg"});
+        fs::remove(path / "local.cfg");
+        fs::create_directories(path / "local.cfg");
+        write_file(path / "local.cfg" / "x", "x\n");
+        listed = one_file;
+    }
+    SECTION("a retargeted symlink") {
+        git(box, path, {"update-index", "--skip-worktree", "link"});
+        fs::remove(path / "link");
+        fs::create_symlink("local.cfg", path / "link");
+        listed = "  1 modified file that Git doesn't show\n    link\n";
+    }
+    // Git's status, and so its own check before removing, misses every one.
+    REQUIRE(
+        git_output(box, path, {"status", "--porcelain", "--untracked-files=no"})
+            .empty());
+
+    auto r = run_wt(box, repo, {"remove", "feature"});
+    CHECK(r.code == 2);
+    CHECK(r.out.empty());
+    CHECK(r.err == "wt: refused: cannot remove feature\n\n" + listed + "\n" +
+                       advice + "Nothing was removed.\n");
+    CHECK(registered(box, repo, path));
+    CHECK(fs::exists(path / "local.cfg"));
+}
+
+TEST_CASE(
+    "wt remove allows files Git doesn't check when they are unchanged or "
+    "absent") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    // Line ending conversion makes crlf.txt's bytes on disk differ from the
+    // index, while what Git would add is the same.
+    write_file(repo / ".gitattributes", "crlf.txt text eol=crlf\n");
+    write_file(repo / "crlf.txt", "line\n");
+    commit_file(box, repo, "local.cfg", "shared\n");
+    commit_file(box, repo, "sparse.txt", "elsewhere\n");
+    fs::create_symlink("README", repo / "link");
+    git(box, repo, {"add", ".gitattributes", "crlf.txt", "link"});
+    git(box, repo, {"commit", "-q", "-m", "more"});
+    const fs::path path = wt_new(box, repo, "feature");
+    REQUIRE(read_file(path / "crlf.txt") == "line\r\n");
+
+    git(box, path,
+        {"update-index", "--assume-unchanged", "local.cfg", "crlf.txt"});
+    git(box, path, {"update-index", "--skip-worktree", "sparse.txt", "link"});
+    // A sparse checkout leaves skip-worktree files out of the worktree.
+    fs::remove(path / "sparse.txt");
+
+    auto r = run_wt(box, repo, {"remove", "feature"});
+    CHECK(r.code == 0);
+    CHECK(r.err.empty());
+    CHECK_FALSE(fs::exists(path));
+}
+
 TEST_CASE("wt remove refuses ignored files unless told to delete them") {
     Sandbox box;
     const fs::path repo = make_repo(box, box.work() / "repo");

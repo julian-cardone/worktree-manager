@@ -365,6 +365,7 @@ It works from the main checkout or any other worktree of the repository.
 - unstaged changes to tracked files;
 - untracked files (even if `status.showUntrackedFiles` is `no`);
 - unresolved merge conflicts;
+- edits to files Git has been told not to check (`assume-unchanged` or `skip-worktree`);
 - ignored files, unless `--delete-ignored` is given.
 
 ```
@@ -388,6 +389,8 @@ The advice after the counts covers only the kinds of change present: plain `git 
 Git itself deletes ignored files (such as `.env` files or build output) with the worktree, so `wt` treats them as something to lose too, and names them (up to 10) so you can check what `--delete-ignored` would delete.
 `--delete-ignored` lets them be deleted, but never overrides any other check.
 `wt` never passes `--force` to Git, so Git's own check for modified and untracked files still applies.
+Neither `git status` nor that check looks at files marked `assume-unchanged` or `skip-worktree` (e.g. local config kept out of commits, or a sparse checkout), so `wt` compares those itself and names any whose content differs from the index as modified files "that Git doesn't show".
+One that is absent, as in a sparse checkout, loses nothing and doesn't count.
 
 **It also refuses:**
 

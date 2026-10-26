@@ -57,21 +57,21 @@ void check_managed(const Context& ctx,
 
 // "2 modified files" for a non-zero count.
 void add_count(std::vector<std::string>& lines, std::size_t count,
-               const std::string& what) {
+               const std::string& what, const std::string& note = "") {
     if (count != 0) {
         lines.push_back(std::to_string(count) + " " + what +
-                        (count == 1 ? " file" : " files"));
+                        (count == 1 ? " file" : " files") + note);
     }
 }
 
 // The count, then the first few paths, e.g. "1 untracked file" + "new.txt".
 void add_listed(std::vector<std::string>& lines,
-                const std::vector<std::string>& paths,
-                const std::string& what) {
+                const std::vector<std::string>& paths, const std::string& what,
+                const std::string& note = "") {
     // Enough to spot what matters without flooding the terminal.
     constexpr std::size_t kMaxShown = 10;
 
-    add_count(lines, paths.size(), what);
+    add_count(lines, paths.size(), what, note);
     const std::size_t shown = std::min(paths.size(), kMaxShown);
     for (std::size_t i = 0; i < shown; ++i) {
         lines.push_back("  " + ui::printable(paths[i]));
@@ -107,17 +107,19 @@ void report_recovery(const Context& ctx, const git::Changes& changes) {
     }
 }
 
-// Explains what removal would destroy, on stderr. Untracked and ignored files
-// are named, not just counted: Git has no copy of them, and deciding to pass
-// --delete-ignored means having seen whether something like a .env file is
-// among them.
+// Explains what removal would destroy, on stderr. Untracked, hidden, and
+// ignored files are named, not just counted: Git has no copy of them or
+// doesn't show them, and deciding to pass --delete-ignored means having seen
+// whether something like a .env file is among them.
 void report_blocked(const Context& ctx, const std::string& task,
-                    const git::Changes& changes, bool show_ignored) {
+                    const git::Changes& changes,
+                    const std::vector<std::string>& hidden, bool show_ignored) {
     std::vector<std::string> lines;
     add_count(lines, changes.staged, "staged");
     add_count(lines, changes.modified, "modified");
     add_listed(lines, changes.untracked, "untracked");
     add_count(lines, changes.conflicts, "conflicted");
+    add_listed(lines, hidden, "modified", " that Git doesn't show");
     if (show_ignored) {
         add_listed(lines, changes.ignored, "ignored");
     }
@@ -129,6 +131,14 @@ void report_blocked(const Context& ctx, const std::string& task,
     }
     ctx.err << '\n';
     report_recovery(ctx, changes);
+    if (!hidden.empty()) {
+        ctx.err << "Git is set not to check the files it doesn't show "
+                   "(assume-unchanged or skip-worktree), but would delete "
+                   "them with the worktree; copy them somewhere safe, or "
+                   "clear the flag with `git update-index "
+                   "--no-assume-unchanged --no-skip-worktree -- <file>` and "
+                   "commit or stash them.\n";
+    }
     if (show_ignored && !changes.ignored.empty()) {
         ctx.err << "Ignored files are deleted with the worktree; move any you "
                    "need, then rerun with --delete-ignored.\n";
@@ -266,10 +276,14 @@ RemovalCheck check_removable(const Context& ctx,
         case git::Status::dirty:
             break;
     }
+    // WARNING: Git's status, and its own check in `git worktree remove`, skip
+    // assume-unchanged and skip-worktree files, so their edits are only
+    // caught here.
+    const auto hidden = git::hidden_changes(worktree.path);
     const bool ignored_block =
         !status.changes.ignored.empty() && !delete_ignored;
-    if (!status.changes.empty() || ignored_block) {
-        report_blocked(ctx, task, status.changes, !delete_ignored);
+    if (!status.changes.empty() || !hidden.empty() || ignored_block) {
+        report_blocked(ctx, task, status.changes, hidden, !delete_ignored);
         return {.allowed = false, .missing = false};
     }
     // WARNING: its state (e.g. a merge message) lives with the worktree and

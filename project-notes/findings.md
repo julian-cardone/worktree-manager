@@ -4,12 +4,6 @@
 
 Known gaps that still need action.
 
-### `wt remove` deletes edits Git has been told not to look at
-
-`git status` doesn't report changes to files marked `skip-worktree` (sparse checkouts, `git update-index --skip-worktree`) or `assume-unchanged`, which is a common way to keep local config edits out of commits.
-`git worktree remove` checks the same way, so `wt status` called such a worktree clean and `wt remove` deleted the edits with exit code 0.
-`wt remove` (and `wt merge --cleanup`) must find these files and refuse when their content differs from the index.
-
 ### `branch.<integration>.mergeOptions` lets `wt merge` resolve conflicts
 
 Git applies `branch.<name>.mergeOptions` to every `git merge` run on that branch.
@@ -27,6 +21,15 @@ The reads should use what `rebasing_worktree` and `operation_in_progress` alread
 
 Findings `wt` now handles.
 Each explains why a check or rule exists; keep it while that check or rule does, and revisit it before relaxing one.
+
+### `git worktree remove` deletes edits Git has been told not to look at
+
+`git status` doesn't report changes to files marked `skip-worktree` (sparse checkouts, `git update-index --skip-worktree`) or `assume-unchanged`, a common way to keep local config edits out of commits.
+`git worktree remove` checks the same way, so `wt remove` deleted such edits with exit code 0.
+`wt remove`, and so `wt merge --cleanup`, now lists these files (`git ls-files -v`) and refuses when one's content differs from the index (`git::hidden_changes`); `--delete-ignored` doesn't override it.
+Content is compared with `git hash-object`, which applies the same filters as `git add` and writes nothing, so line-ending conversion alone isn't a change; a symlink is compared by its target, and anything else in a file's place counts as changed.
+A flagged file that is absent, as in a sparse checkout, loses nothing and is allowed.
+`wt status` still reports what Git reports, so it can call such a worktree clean; the check guards the deletion, not the read.
 
 ### Interrupted commands are handled by the next invocation, not a signal handler
 
