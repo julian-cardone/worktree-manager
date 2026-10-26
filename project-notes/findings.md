@@ -4,7 +4,24 @@
 
 Known gaps that still need action.
 
-None right now.
+### `wt remove` deletes edits Git has been told not to look at
+
+`git status` doesn't report changes to files marked `skip-worktree` (sparse checkouts, `git update-index --skip-worktree`) or `assume-unchanged`, which is a common way to keep local config edits out of commits.
+`git worktree remove` checks the same way, so `wt status` called such a worktree clean and `wt remove` deleted the edits with exit code 0.
+`wt remove` (and `wt merge --cleanup`) must find these files and refuse when their content differs from the index.
+
+### `branch.<integration>.mergeOptions` lets `wt merge` resolve conflicts
+
+Git applies `branch.<name>.mergeOptions` to every `git merge` run on that branch.
+With it set to `-Xours` on the integration branch, a conflicting task merged with "✓ Merged" and the task's change was silently dropped; the task is still an ancestor, so the post-merge check passed and `--cleanup` would delete its branch.
+`wt merge` must refuse while that setting is active rather than override it, since `wt` can't guarantee conflicts stay manual under it.
+Custom merge drivers in `.gitattributes` are repository policy and out of scope.
+
+### `wt status` and `wt list` misdescribe worktrees mid-operation
+
+During a stopped `git rebase` in a task's worktree, `wt status <task>` said the branch "isn't checked out in any worktree", and `wt list` showed only a detached HEAD.
+A worktree mid-bisect, cherry-pick, or `git am` showed `Status: clean` with no mention of the operation, although `wt merge` and `wt remove` refuse it.
+The reads should use what `rebasing_worktree` and `operation_in_progress` already know.
 
 ## Addressed
 
