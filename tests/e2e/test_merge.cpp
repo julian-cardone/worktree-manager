@@ -599,7 +599,7 @@ TEST_CASE("wt merge refuses when the task is in the middle of an operation") {
     const fs::path repo = make_repo(box, box.work() / "repo");
     const fs::path path = wt_new(box, repo, "feature");
     commit_file(box, path, "a.txt", "a\n");
-    // Each leaves the task's files clean and its branch checked out, but
+    // Most leave the task's files clean and its branch checked out, but
     // without the work the operation is still adding.
     std::string operation;
     SECTION("a merge") {

@@ -94,9 +94,9 @@ Earlier builds exited 1 for every failure; the categories were introduced as a d
 #### Interrupted commands
 
 `wt` installs no signal handlers, so Ctrl+C stops it along with the Git command it is running, and `wt` attempts no cleanup of its own.
-Git keeps its own state consistent when interrupted, but may be left in the middle of an operation, such as a merge `wt merge` was about to abort.
-The next `wt merge` or `wt remove` then refuses that worktree; finish or abort the operation with Git, then rerun.
-If `wt merge --cleanup` is interrupted after the task has landed, rerunning it completes the cleanup.
+Git cleans up its lock files, but may leave an operation in progress, such as a merge `wt merge` was about to abort, or the files partly updated.
+The next `wt merge` or `wt remove` then refuses that worktree; inspect it with `git status`, finish or abort any operation with Git, then rerun.
+If `wt merge --cleanup` is interrupted after the task has landed, rerunning it finishes the cleanup, or explains what is left to deal with first.
 
 ### `wt list`
 

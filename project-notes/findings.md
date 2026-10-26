@@ -13,10 +13,11 @@ Each explains why a check or rule exists; keep it while that check or rule does,
 
 ### Interrupted commands are handled by the next invocation, not a signal handler
 
-Ctrl+C reaches both `wt` and the Git command it is running, and Git already cleans up its lock files and leaves any operation it can't finish recorded in the worktree.
+Ctrl+C reaches both `wt` and the Git command it is running; Git cleans up its lock files and records most operations it can't finish in the worktree.
 Cleanup from a signal handler (e.g. running `git merge --abort`) would mutate state that hasn't been re-validated, at the moment it is least understood.
 `wt` therefore keeps the default signal dispositions, and the commands that change an existing worktree (`wt merge`, `wt remove`) refuse one that is mid-operation (`git::operation_in_progress`).
 `wt merge` checks for the operation before uncommitted changes, so a conflicted merge left by an interrupted `wt merge` is named, rather than reported as changes to commit or stash, which Git refuses while conflicts remain.
+Git interrupted while updating files (e.g. mid-checkout in a fast-forward) can leave them partly updated with no operation recorded; `wt` then refuses them as uncommitted changes, which is safe, though its commit-or-stash advice doesn't fit.
 Don't add signal-based rollback without proving it safe against every intermediate state.
 
 ### `git worktree remove` deletes ignored files without asking
