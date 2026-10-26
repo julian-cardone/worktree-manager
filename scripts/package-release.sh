@@ -31,11 +31,12 @@ name="wt-$version-$os-$arch"
 # Stage through the install rules so the package holds exactly what
 # `cmake --install` installs. DESTDIR also suppresses the PATH hint.
 stage=$(mktemp -d)
+unpacked=$(mktemp -d)
 manifest="$build_dir/install_manifest.txt"
 # WARNING: a DESTDIR install records files at their final paths (/bin/wt) in
 # the manifest, where the uninstall target would remove them from the real
 # system, so the manifest must never outlive the stage.
-trap 'rm -rf "$stage"; rm -f "$manifest"' EXIT
+trap 'rm -rf "$stage" "$unpacked"; rm -f "$manifest"' EXIT
 DESTDIR="$stage/$name" cmake --install "$build_dir" --prefix / --strip
 
 # Refuse to ship anything the install rules didn't intend to ship.
@@ -49,4 +50,11 @@ fi
 archive="$build_dir/$name.tar.gz"
 # COPYFILE_DISABLE keeps macOS tar from adding AppleDouble metadata files.
 COPYFILE_DISABLE=1 tar -czf "$archive" -C "$stage" "$name"
+
+# The archive holds a stripped copy, so check that copy runs, not the build's.
+tar -xzf "$archive" -C "$unpacked"
+if [ "$("$unpacked/$name/bin/wt" --version)" != "wt $version" ]; then
+  echo "package-release: the packaged wt does not report version $version" >&2
+  exit 1
+fi
 echo "$archive"

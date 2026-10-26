@@ -1,6 +1,6 @@
 # Publishes a GitHub Release when a version tag (e.g. v0.1.0) is pushed.
-# Nothing is published unless every platform builds, passes the full test
-# suite, and reports exactly the tagged version. See "Releases" in README.md.
+# Nothing is published unless the macOS arm64 build passes the full test
+# suite and reports exactly the tagged version. See "Releases" in README.md.
 name: Release
 
 on:
@@ -33,13 +33,10 @@ jobs:
           fi
 
   package:
-    name: Package (${{ matrix.os }})
+    name: Package (macos-arm64)
     needs: check-tag
-    strategy:
-      matrix:
-        # The platforms CI tests; wt is POSIX-only.
-        os: [ubuntu-24.04, macos-15]
-    runs-on: ${{ matrix.os }}
+    # Releases ship only macOS arm64 for now; CI still tests Linux too.
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
 
@@ -64,7 +61,7 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: package-${{ matrix.os }}
+          name: package-macos-arm64
           path: build-release/wt-*.tar.gz
           if-no-files-found: error
 

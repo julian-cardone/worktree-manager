@@ -39,24 +39,24 @@ The examples use `~/.local`, which needs no administrator rights.
 
 ### From a release binary
 
-Each [GitHub Release](https://github.com/julian-cardone/worktree-manager/releases) has a prebuilt binary for macOS on Apple silicon (`macos-arm64`) and Linux on x86_64 (`linux-x86_64`), plus a `SHA256SUMS` file:
+Each [GitHub Release](https://github.com/julian-cardone/worktree-manager/releases) has a prebuilt binary for macOS on Apple silicon (`macos-arm64`), plus a `SHA256SUMS` file:
 
 ```sh
 version=0.1.0
-platform=macos-arm64    # or linux-x86_64
+platform=macos-arm64
 base=https://github.com/julian-cardone/worktree-manager/releases/download/v$version
 curl -fLO "$base/wt-$version-$platform.tar.gz"
 curl -fLO "$base/SHA256SUMS"
-shasum -a 256 --check --ignore-missing SHA256SUMS    # on Linux: sha256sum --check --ignore-missing SHA256SUMS
+shasum -a 256 --check --ignore-missing SHA256SUMS
 mkdir -p ~/.local
 tar -xzf "wt-$version-$platform.tar.gz" --strip-components=1 -C ~/.local
 wt --version
 ```
 
-Each archive contains only `wt-<version>-<platform>/bin/wt`, so this installs `~/.local/bin/wt`.
+The archive contains only `wt-<version>-<platform>/bin/wt`, so this installs `~/.local/bin/wt`.
 The macOS binary isn't notarized; downloading with `curl` as above avoids the quarantine flag a browser download would add, which makes macOS block it.
-The binaries are built on macOS 15 and Ubuntu 24.04 and use the system's C and C++ runtime libraries, so they may not run on older versions.
-On other platforms, such as Intel Macs or ARM Linux, build from source.
+The binary is built on macOS 15 and uses the system's C and C++ runtime libraries, so it may not run on older versions.
+On other platforms, such as Linux or Intel Macs, build from source.
 
 To update, install the newer archive the same way; it replaces the old binary.
 To uninstall, delete the binary: `rm ~/.local/bin/wt`.
@@ -670,7 +670,7 @@ tests/
 
 The current version is 0.1.0, the first release.
 
-Release binaries are published on the [Releases page](https://github.com/julian-cardone/worktree-manager/releases), one archive per platform, named `wt-<version>-<os>-<arch>.tar.gz` (e.g. `wt-0.1.0-macos-arm64.tar.gz`), with a `SHA256SUMS` file.
+Release binaries are published on the [Releases page](https://github.com/julian-cardone/worktree-manager/releases) as an archive named `wt-<version>-<os>-<arch>.tar.gz` (currently only `macos-arm64`, e.g. `wt-0.1.0-macos-arm64.tar.gz`), with a `SHA256SUMS` file.
 See [Installing](#from-a-release-binary) for how to install one.
 
 ### Cutting a release
@@ -687,11 +687,11 @@ git push origin v0.1.0
 Pushing a tag of the form `vX.Y.Z` runs `.github/workflows/release.yml`, which publishes a GitHub Release only if:
 
 - the tagged commit is on `main`;
-- the Release build passes the full test suite on Linux and macOS;
-- the built binary reports exactly the tagged version;
+- the Release build passes the full test suite on macOS arm64;
+- the built binary, and the copy in the archive, report exactly the tagged version;
 - no release for the tag exists yet; an existing one is never modified.
 
-The archives are built on the same Ubuntu 24.04 (x86_64) and macOS 15 (arm64) runners as CI, with a script you can also run locally:
+The archive is built on the same macOS 15 (arm64) runner as CI, with a script you can also run locally:
 
 ```sh
 scripts/package-release.sh     # configure, build, and test in build-release/, then package
