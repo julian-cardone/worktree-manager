@@ -232,6 +232,15 @@ TEST_CASE("wt remove refuses edits to files Git doesn't check for changes") {
         fs::create_symlink("local.cfg", path / "link");
         listed = "  1 modified file that Git doesn't show\n    link\n";
     }
+    SECTION("a path that looks like an option and spans lines") {
+        const std::string name = "-x\nname";
+        write_file(path / name, "shared\n");
+        git(box, path, {"add", "--", name});
+        git(box, path, {"commit", "-q", "-m", "odd name"});
+        git(box, path, {"update-index", "--assume-unchanged", "--", name});
+        write_file(path / name, "mine\n");
+        listed = "  1 modified file that Git doesn't show\n    -x?name\n";
+    }
     // Git's status, and so its own check before removing, misses every one.
     REQUIRE(
         git_output(box, path, {"status", "--porcelain", "--untracked-files=no"})
@@ -259,13 +268,20 @@ TEST_CASE(
     commit_file(box, repo, "sparse.txt", "elsewhere\n");
     fs::create_symlink("README", repo / "link");
     git(box, repo, {"add", ".gitattributes", "crlf.txt", "link"});
+    // A submodule, which a worktree gets as an empty directory until it is
+    // initialized.
+    git(box, repo,
+        {"update-index", "--add", "--cacheinfo",
+         "160000," + head_of(box, repo) + ",sub"});
     git(box, repo, {"commit", "-q", "-m", "more"});
     const fs::path path = wt_new(box, repo, "feature");
     REQUIRE(read_file(path / "crlf.txt") == "line\r\n");
+    REQUIRE(fs::is_empty(path / "sub"));
 
     git(box, path,
         {"update-index", "--assume-unchanged", "local.cfg", "crlf.txt"});
-    git(box, path, {"update-index", "--skip-worktree", "sparse.txt", "link"});
+    git(box, path,
+        {"update-index", "--skip-worktree", "sparse.txt", "link", "sub"});
     // A sparse checkout leaves skip-worktree files out of the worktree.
     fs::remove(path / "sparse.txt");
 

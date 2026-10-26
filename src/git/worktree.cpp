@@ -453,21 +453,24 @@ std::vector<HiddenEntry> parse_hidden_entries(const fs::path& dir,
         pos = end + 1;
 
         const std::size_t tab = entry.find('\t');
-        if (tab == std::string_view::npos) {
+        if (tab == std::string_view::npos || entry.size() < 2 ||
+            entry[1] != ' ') {
             hidden_unknown(dir, "unexpected output from git ls-files");
         }
-        std::istringstream fields(std::string(entry.substr(0, tab)));
-        std::string tag;
+        // Most entries aren't flagged, so only those are parsed further.
+        const char t = entry.front();
+        if (t != 'S' && !(t >= 'a' && t <= 'z')) {
+            continue;
+        }
+        std::istringstream fields(std::string(entry.substr(2, tab - 2)));
         std::string mode;
         std::string object;
         std::string stage;
-        if (!(fields >> tag >> mode >> object >> stage) || tag.size() != 1) {
+        if (!(fields >> mode >> object >> stage)) {
             hidden_unknown(dir, "unexpected output from git ls-files");
         }
-        const char t = tag.front();
         // Unmerged entries (stage > 0) are reported as conflicts already.
-        const bool hidden = t == 'S' || (t >= 'a' && t <= 'z');
-        if (hidden && stage == "0") {
+        if (stage == "0") {
             entries.push_back(
                 {mode, object, std::string(entry.substr(tab + 1))});
         }
@@ -515,6 +518,7 @@ std::vector<std::string> hidden_changes(const fs::path& dir) {
         hidden_unknown(dir, error_message(r.err));
     }
     constexpr std::string_view kSymlinkMode = "120000";
+    constexpr std::string_view kGitlinkMode = "160000";
 
     std::vector<std::string> changed;
     std::vector<const HiddenEntry*> to_hash;
@@ -549,6 +553,11 @@ std::vector<std::string> hidden_changes(const fs::path& dir) {
             if (blob.out != target.string()) {
                 changed.push_back(entry.path);
             }
+        } else if (type == fs::file_type::directory &&
+                   entry.mode == kGitlinkMode && fs::is_empty(on_disk, ec) &&
+                   !ec) {
+            // A submodule that was never initialized holds nothing.
+            continue;
         } else {
             // Not what the index has, e.g. a directory where it has a file.
             changed.push_back(entry.path);

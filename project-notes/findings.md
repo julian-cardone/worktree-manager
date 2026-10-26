@@ -28,7 +28,7 @@ Each explains why a check or rule exists; keep it while that check or rule does,
 `git worktree remove` checks the same way, so `wt remove` deleted such edits with exit code 0.
 `wt remove`, and so `wt merge --cleanup`, now lists these files (`git ls-files -v`) and refuses when one's content differs from the index (`git::hidden_changes`); `--delete-ignored` doesn't override it.
 Content is compared with `git hash-object`, which applies the same filters as `git add` and writes nothing, so line-ending conversion alone isn't a change; a symlink is compared by its target, and anything else in a file's place counts as changed.
-A flagged file that is absent, as in a sparse checkout, loses nothing and is allowed.
+A flagged file that is absent, as in a sparse checkout, loses nothing and is allowed, as is a flagged submodule's empty, uninitialized directory.
 `wt status` still reports what Git reports, so it can call such a worktree clean; the check guards the deletion, not the read.
 
 ### Interrupted commands are handled by the next invocation, not a signal handler

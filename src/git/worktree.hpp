@@ -100,8 +100,9 @@ StatusResult worktree_status(const Worktree& worktree,
 // from the index. `git status`, and Git's own check before removing a
 // worktree, skip these files, so edits to them would be lost without a word.
 // A file that is absent isn't listed: the index still has its content.
-// Never modifies the worktree, its index, or the object store. Throws a
-// refused wt::Error if this can't be determined.
+// Never modifies the worktree or its index, and stores no Git objects (though
+// a clean filter, e.g. Git LFS, may cache what it reads). Throws a refused
+// wt::Error if this can't be determined.
 std::vector<std::string> hidden_changes(const std::filesystem::path& dir);
 
 // How wt shows a status, e.g. "dirty"; "-" for a bare repository.
