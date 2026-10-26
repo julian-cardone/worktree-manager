@@ -477,11 +477,14 @@ int clean_up(const Context& ctx, const std::string& task,
     }
 }
 
-// Merges `task` into `base` in `dest`, whose worktree check_destination has
-// accepted, or finds it has already landed. Returns 0 once `base` is verified
-// to contain the task.
+// Merges `task` into `base` in `dest`, or finds it has already landed.
+// Returns 0 once `base` is verified to contain the task.
 int land(const Context& ctx, const std::string& task, const std::string& base,
          const git::Worktree& dest, const git::Worktree* source) {
+    // WARNING: checked here, after the slower checks on the task, so the
+    // merge starts from the state this saw; aborting a failed merge relies
+    // on it.
+    check_destination(dest, base);
     const std::string shown_task = ui::printable(task);
     const std::string shown_base = ui::printable(base);
     const auto divergence =
@@ -667,7 +670,6 @@ int merge_command(const Context& ctx, const std::string& task, bool cleanup,
                                          "worktree; check it out to merge "
                                          "into it");
     }
-    check_destination(*dest, base);
     const git::Worktree* source = find_branch_worktree(worktrees, task);
     if (source != nullptr) {
         check_source(*source, task);
