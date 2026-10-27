@@ -7,7 +7,9 @@ Before changing an area, read its findings file below.
 
 Known gaps that still need action.
 
-None right now.
+- **`wt merge --cleanup` on an already-landed task words its refusal as if a merge were pending.**
+  If the task's worktree has uncommitted changes, `check_source` (`src/commands/merge_preflight.cpp`) refuses with "…which the merge wouldn't include" and "Nothing was merged.", although there is nothing left to merge and what is actually blocked is the cleanup.
+  Refusing is correct; only the message misleads. Fix by saying the changes block the cleanup when the task has already landed.
 
 ## Addressed
 

@@ -492,11 +492,11 @@ A commit added to the branch after it landed, even in the moment between `wt`'s 
 `git branch -d` also removes the branch's configuration, such as its upstream.
 Remote branches, such as `origin/<task>`, are never touched.
 
-**If the task has already landed**, `wt merge --cleanup` finds nothing to merge and goes straight to the cleanup.
+**If the task has already landed**, `wt merge --cleanup` finds nothing to merge and goes straight to the cleanup, after the same checks as before a merge: its worktree must still be clean and removable.
 That also deletes branches whose worktrees were removed earlier with `wt remove`.
 `--cleanup` never forgets a worktree whose directory is missing; run `wt remove <task> --forget-missing` first, then rerun it.
 
-**If the cleanup fails after landing**, the merge stays, and `wt` reads what is left from Git and says how to finish:
+**If the cleanup fails after landing**, for example because a `post-merge` hook or another process added a file to the task's worktree after `wt` checked it, the merge stays, and `wt` reads what is left from Git and says how to finish:
 
 ```
 $ wt merge feature-x --cleanup
