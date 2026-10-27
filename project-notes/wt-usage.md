@@ -4,7 +4,7 @@ Friction found while using `wt` to develop `wt`.
 
 ## Missing wt capabilities
 
-Agents must use `wt`, not Git, for the worktree lifecycle (`AGENTS.md` section 4), so these lifecycle steps currently need a human.
+Agents must use `wt`, not Git, for the worktree lifecycle (`AGENTS.md` section 3), so these lifecycle steps currently need a human.
 Only gaps inside `wt`'s product boundary belong here; remove an item once `wt` covers it.
 
 - **Give an existing branch a worktree**: `wt new` only creates new branches, so a task whose worktree was removed before it landed can't be rebased onto `main` through `wt`.

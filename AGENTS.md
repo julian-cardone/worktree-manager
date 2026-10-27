@@ -10,30 +10,11 @@ Read this file at the start of every prompt. Do not rely on memory of previous i
 
 It is not a Git replacement. Staging, committing, history, diffs, and other general repository operations stay with Git; do not add `wt` commands that merely wrap them.
 
-## 1. General Principles
+## 1. Project-Specific Engineering
 
-- Prioritize correctness, safety, clarity, scalability, and maintainability.
-- Read the current source code directly. Do not rely on stale builds, generated artifacts, or memory.
-- Follow established C++ best practices and maintain a clean, consistent architecture.
-- Prefer simple solutions over unnecessary complexity.
-- Make improvements when they provide genuine value. Avoid refactoring solely for its own sake.
-
-## 2. Code Review & Improvements
-
-As we review and modify the codebase, watch for:
-
-- **Bugs & Security:** Identify and surface bugs, security vulnerabilities, unsafe behavior, and meaningful risks.
-- **Code & Architecture:** Identify improvements to code quality, maintainability, scalability, and architecture.
-- **Parallel Development:** Organize code and tests so independent areas can usually be changed independently. If a file repeatedly becomes a conflict hotspot across parallel tasks, split it along natural responsibility boundaries when doing so also improves maintainability. Do not fragment code solely to avoid Git conflicts.
 - **TODOs:** Identify relevant deferred work, bring it to my attention first, and only then record it in `project-notes/TODO.md`. Do not leave TODO, FIXME, or similar deferred-work comments in source code.
-- **Dead Code:** Remove unused or obsolete code.
-- **Shared Code:** Extract common functionality when it genuinely reduces duplication or improves maintainability.
-- **Constants:** Prefer constants at the lowest appropriate scope. Only share constants when they represent the same concept, not merely because their values match.
-- **Significant Changes:** Surface substantial refactoring, architectural decisions, public behavior changes, or important trade-offs when they provide meaningful value.
 
-Implement straightforward, clearly beneficial improvements where appropriate. Surface decisions that require my input before proceeding.
-
-## 3. Safety & Error Handling
+## 2. Safety & Error Handling
 
 ### Safety invariants
 
@@ -55,15 +36,11 @@ These must always hold. Review every command, new or changed, against each of th
 
 ### Practices
 
-- Validate and sanitize paths, branch names, command arguments, and other external inputs.
 - Read Git through machine-oriented interfaces: porcelain formats, `-z`, `--format`, and exit codes. Never parse output meant for humans, including error messages, which are translated. Query one path per command when Git has no `-z`, since paths can contain newlines.
-- Consider edge cases, partial failures, interrupted operations, and concurrent processes.
-- Use retries only when appropriate; do not mask persistent failures.
 - Add a `WARNING:` comment at checks that uphold a safety invariant so they are not relaxed accidentally.
 - Never bypass a `wt` safety check.
-- Structure consequential commands as: **discover → validate → plan → mutate → verify → report**.
 
-## 4. Dogfooding `wt`
+## 3. Dogfooding `wt`
 
 All development on this repository must exercise `wt` as the intended worktree workflow.
 
@@ -78,32 +55,18 @@ All development on this repository must exercise `wt` as the intended worktree w
 - Use `git restore` for file-level restoration and conflict resolution; do not use `git checkout`.
 - If `wt` is broken, unsafe, or lacks a required lifecycle capability, stop and report the limitation instead of bypassing it. Keep the missing-capabilities section of `project-notes/wt-usage.md` current as gaps are found or resolved.
 - Friction in general Git workflows is not by itself a reason to add a `wt` command. Only propose new `wt` commands that fit the product boundary above.
-- Record concise, non-routine friction in `project-notes/wt-usage.md`, including actual rebase conflicts, repeated manual workarounds, recurring cleanup steps, workflow interruptions, review passes that find issues, and rework caused by parallel tasks. For conflicts, name the task and conflicted files. Do not log conflict-free rebases, routine approvals, or routine successful commands.
+- Record concise, non-routine friction in `project-notes/wt-usage.md`, including actual rebase conflicts, repeated manual workarounds, recurring cleanup steps, workflow interruptions, review passes that find issues, rework caused by parallel tasks, and unexpectedly token- or context-heavy tasks or reviews. For conflicts, name the task and conflicted files. For unusually expensive work, briefly note the cause when known. Do not log conflict-free rebases, routine approvals, routine successful commands, or normal token usage.
 - Record significant product, architecture, safety, reliability, performance, or usability findings in `project-notes/findings.md` (Open) or its subsystem files (Addressed), and surface important findings when discovered.
 - Do not log routine successful commands or generate unnecessary noise.
 
 This repository keeps `main` linear. Before reporting a task complete or landing it, follow `docs/agent-workflows/landing-tasks.md`.
 
-## 5. Code Quality & Documentation
+## 4. Project-Specific Testing
 
-- Document new CLI commands, options, and developer-facing commands in `README.md` as they are introduced.
-- Keep documentation consistent with the implementation.
-- Comments should explain **why** something is done, not duplicate technical documentation.
-- Keep comments natural, concise, useful, and current.
-
-## 6. Testing & Changes
-
-- Create and maintain unit and end-to-end tests as development progresses.
-- Cover normal behavior, relevant edge cases, errors, and failure scenarios.
-- Tests must never be able to modify or delete real user repositories or data.
 - Command logic takes its working directory and output streams from `wt::Context`, never from process-global state, so tests can run against an isolated sandbox (`tests/support/sandbox.hpp`).
-- When modifying code, review the blast radius and update all affected code, references, documentation, comments, and tests.
-- Do not leave stale or inconsistent code behind.
-- After each code-changing commit, rebuild and run the relevant tests so the build reflects the committed state.
 - Before reporting a code-changing task complete or landing it, rebuild and run the full test suite against the exact final committed and rebased state that will be landed.
-- Do not claim verification unless the relevant build and tests were actually run.
 
-## 7. Task Handoff
+## 5. Task Handoff
 
 End each task with a concise handoff using this structure:
 
@@ -159,7 +122,7 @@ Do not repeat routine checks or implementation details unless they affect a deci
 
 If **Decision needed** is `None`, required independent review has passed or is not required, **Worth external review** is `No`, and verification found no issues, the task does not need additional review: land it and clean up (`wt merge <task> --cleanup`, following `docs/agent-workflows/landing-tasks.md`) without asking first, then report `LANDED`.
 
-## 8. Project Notes
+## 6. Project Notes
 
 Keep project knowledge and decisions in this repository (`AGENTS.md`, `project-notes/`), not in agent-private memory. Claude auto-memory is disabled for this project in `.claude/settings.json`.
 
