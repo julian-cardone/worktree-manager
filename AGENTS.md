@@ -13,6 +13,7 @@ It is not a Git replacement. Staging, committing, history, diffs, and other gene
 ## 1. Project-Specific Engineering
 
 - **TODOs:** Identify relevant deferred work, bring it to my attention first, and only then record it in `project-notes/TODO.md`. Do not leave TODO, FIXME, or similar deferred-work comments in source code.
+- **README:** Document new CLI commands, options, and developer-facing commands in `README.md` as they are introduced.
 
 ## 2. Safety & Error Handling
 
