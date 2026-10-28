@@ -4,6 +4,7 @@
 
 #include <string>
 
+using wt::layout::same_ignoring_case;
 using wt::layout::task_folder_name;
 using wt::layout::task_name_problem;
 
@@ -37,4 +38,13 @@ TEST_CASE("task_folder_name turns slashes into dashes") {
     CHECK(task_folder_name("feature-x") == "feature-x");
     CHECK(task_folder_name("claude/fix-login") == "claude-fix-login");
     CHECK(task_folder_name("a/b/c") == "a-b-c");
+}
+
+TEST_CASE("same_ignoring_case compares branch names ignoring ASCII case") {
+    CHECK(same_ignoring_case("Fix/Login", "fix/login"));
+    CHECK(same_ignoring_case("MAIN", "main"));
+    CHECK_FALSE(same_ignoring_case("main", "main2"));
+    CHECK_FALSE(same_ignoring_case("fix", "fix/login"));
+    // Only ASCII is folded, as with task names.
+    CHECK_FALSE(same_ignoring_case("caf\xc3\xa9", "CAF\xc3\x89"));
 }

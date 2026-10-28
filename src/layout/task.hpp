@@ -15,4 +15,9 @@ std::optional<std::string> task_name_problem(std::string_view task);
 // The worktree directory name for a valid task: "claude/fix" -> "claude-fix".
 std::string task_folder_name(std::string_view task);
 
+// Whether two branch names are equal ignoring ASCII case, as their loose ref
+// files are on a case-insensitive filesystem. Task names are ASCII, so ASCII
+// case folding is enough to compare one with any branch name.
+bool same_ignoring_case(std::string_view a, std::string_view b);
+
 }  // namespace wt::layout

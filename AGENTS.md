@@ -29,7 +29,7 @@ These must always hold. Review every command, new or changed, against each of th
 | Validate immediately before mutation | Re-read the state the mutation depends on instead of relying on earlier checks. |
 | Success is verified, not assumed | After mutating, confirm the intended result from Git and the filesystem; an exit code alone is not proof. |
 | Failed operations leave understandable state | Especially for `new`, `merge`, and `remove`, explain what changed and what was left behind. |
-| Only proven-landed branches are deleted | `wt remove` never deletes branches. Only `wt merge --cleanup` may delete the task branch, after proving it is contained in the integration branch, and only with `git branch -d`. |
+| Only landed or explicitly abandoned branches are deleted | `wt merge --cleanup` may delete the task branch only after proving it is contained in the integration branch, and only with `git branch -d`. `wt remove` deletes a branch only with `--delete-branch`, after its worktree is verified gone, never the integration branch (or a candidate for it) or a branch checked out elsewhere, and only at the tip it checked (`git update-ref -d <ref> <tip>`, never `git branch -D`). |
 | Conflict resolution stays manual | `wt` never guesses how a conflict should be resolved. |
 | Unknown state means stop | Never treat uncertainty as safety. |
 | User input never becomes shell syntax | Pass arguments as argv, never through a shell; quote commands printed for users to paste. |

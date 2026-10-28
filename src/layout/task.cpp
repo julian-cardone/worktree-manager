@@ -1,6 +1,7 @@
 #include "layout/task.hpp"
 
 #include <algorithm>
+#include <cctype>
 
 namespace wt::layout {
 
@@ -57,6 +58,13 @@ std::string task_folder_name(std::string_view task) {
     std::string folder(task);
     std::replace(folder.begin(), folder.end(), '/', '-');
     return folder;
+}
+
+bool same_ignoring_case(std::string_view a, std::string_view b) {
+    return std::ranges::equal(a, b, [](char x, char y) {
+        return std::tolower(static_cast<unsigned char>(x)) ==
+               std::tolower(static_cast<unsigned char>(y));
+    });
 }
 
 }  // namespace wt::layout

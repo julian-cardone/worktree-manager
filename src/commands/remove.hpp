@@ -12,9 +12,12 @@ namespace wt {
 // `wt remove <task>`: removes the worktree wt created for <task>, refusing if
 // that could lose anything not committed. Ignored files also block removal
 // unless `delete_ignored` is set, and a worktree whose directory is missing
-// unless `forget_missing` is. Never deletes the branch.
+// unless `forget_missing` is. Keeps the branch unless `delete_branch` is set;
+// then, once the worktree is verified gone, or if the task had none, deletes
+// the branch whether or not it has landed.
 int remove_command(const Context& ctx, const std::string& task,
-                   bool delete_ignored, bool forget_missing);
+                   bool delete_ignored, bool forget_missing,
+                   bool delete_branch);
 
 // Whether `wt remove` may remove a task's worktree, from check_removable.
 struct RemovalCheck {

@@ -116,7 +116,7 @@ The integration branch is usually `main`; [`wt new`](#wt-new-task) explains how 
 
 `--cleanup` refuses to remove the worktree you're running it from, so run it from another worktree.
 Without `--cleanup`, `wt merge fix-login` lands the task and keeps its worktree and branch.
-`wt remove fix-login` removes the worktree without merging, and always keeps the branch.
+`wt remove fix-login` removes the worktree without merging, and keeps the branch; `wt remove fix-login --delete-branch` abandons the task, deleting its branch too.
 Both refuse rather than delete uncommitted work, and say what is in the way.
 
 To keep the integration branch's history linear, set `git config merge.ff only`; `wt merge` then refuses a task that is behind and prints the `git rebase` command to bring it up to date.
@@ -138,6 +138,7 @@ To keep the integration branch's history linear, set `git config merge.ff only`;
 | `wt remove <task>` | Remove the task's worktree if nothing uncommitted would be lost. The branch is kept. |
 | `wt remove <task> --delete-ignored` | The same, also deleting ignored files with the worktree. |
 | `wt remove <task> --forget-missing` | Remove only Git's record of a worktree whose directory is gone. The branch is kept. |
+| `wt remove <task> --delete-branch` | Abandon a task: remove its worktree as above, if it has one, then delete its branch even though it hasn't landed. |
 
 `wt <command> --help` describes each command and its options.
 A `<task>` is the name of the task's branch.
@@ -151,8 +152,8 @@ A `<task>` is the name of the task's branch.
   Ignored files (such as `.env` or `build/`) are deleted only if you pass `--delete-ignored`, after `wt` has listed them.
 - **It never forces.**
   `wt` never passes `--force` to Git or resets a branch.
-  `wt remove` never deletes a branch.
-  Only `wt merge --cleanup` does, after proving the branch's tip is contained in the integration branch, and then only with `git branch -d`, so Git checks again.
+  `wt merge --cleanup` deletes a branch only after proving its tip is contained in the integration branch, and then only with `git branch -d`, so Git checks again.
+  `wt remove` deletes an unlanded branch only when told to with `--delete-branch`, after its worktree is verified gone, and never the integration branch or a branch checked out anywhere.
 - **It never resolves conflicts.**
   On a conflict, `wt merge` aborts the merge, checks that the integration branch is back where it was, and lists the conflicting files for you to resolve.
 - **It only removes what it created.**
@@ -480,7 +481,7 @@ Deleted branch feature-x (was 3f2a9c1)
 ```
 
 `--cleanup` finishes the task once it has landed: it removes the task's worktree, with every check `wt remove` makes, and then deletes the task's local branch.
-`wt remove` itself never deletes a branch; this is the only command that does.
+`wt remove` deletes a branch only when asked to abandon the task with `--delete-branch`.
 `--delete-ignored` may be added, with the same meaning as for `wt remove`: it lets ignored files be deleted with the worktree, and never overrides any other check.
 
 **Before merging**, `wt merge --cleanup` also refuses, and changes nothing, if the worktree couldn't be removed afterwards (for example, it has ignored files and `--delete-ignored` wasn't given, its directory is missing, or you are running `wt` from inside it), or if the branch has an upstream other than the integration branch that lacks its commits, since `git branch -d` would then refuse to delete it.
@@ -526,7 +527,7 @@ Kept branch feature-x
 ```
 
 Removes the worktree that has branch `<task>` checked out, using `git worktree remove`.
-The branch and its commits are always kept; to delete the branch once the task has landed, use `wt merge <task> --cleanup` instead.
+The branch and its commits are kept unless `--delete-branch` is given (see [Abandoning a task](#abandoning-a-task)); to delete the branch once the task has landed, use `wt merge <task> --cleanup` instead.
 It works from the main checkout or any other worktree of the repository.
 
 **It refuses, and changes nothing, if the worktree has:**
@@ -591,6 +592,42 @@ Other stale worktrees are left alone, unlike `git worktree prune`.
 
 **If Git fails**, `wt remove` exits 4, shows Git's output, and says whether the worktree's directory is still there.
 After Git reports success, `wt remove` checks that Git no longer lists the worktree and its directory is gone, and exits 4 if not.
+
+#### Abandoning a task
+
+```
+$ wt remove feature-x --delete-branch
+Removed worktree ~/Dev/.worktree-manager.wt-a13f92c4/feature-x
+Deleted branch feature-x (was 3f2a9c1)
+To restore it: git branch feature-x 3f2a9c1e…
+```
+
+`--delete-branch` deletes the task's branch whether or not it has landed, so its commits are no longer on any branch.
+It also works for a task whose worktree was already removed with plain `wt remove`.
+Use `wt merge <task> --cleanup` instead for a task that has landed.
+
+**The worktree goes first.** A task with a worktree gets every check above, and `--delete-branch` overrides none of them: uncommitted or ignored files (without `--delete-ignored`), an operation in progress, or any other refusal keeps both the worktree and the branch.
+The branch is deleted only once the worktree is verified gone; if removing it fails, the branch is kept.
+
+**Before removing anything**, and again right before deleting the branch, `wt remove --delete-branch` refuses:
+
+- a name that isn't a local branch, including a tag, or a branch spelled with different case (on a case-insensitive filesystem Git would find `Feature` in `feature`'s ref file);
+- the integration branch, or any branch that could become it: `main`, `master`, the `wt.integrationBranch` setting, and the local branch named after `origin/HEAD`, whether or not each is the one chosen now;
+- a name `wt new` wouldn't create, or one that differs only in case from another branch;
+- a branch checked out in any worktree other than its own `wt` worktree, including the main worktree, or being rebased anywhere.
+
+**Without a worktree,** nothing in Git records that `wt` created a branch, and `wt` keeps no record of its own.
+So `wt` also requires the repository's container to exist and be verifiably this repository's, which shows that `wt` manages tasks here, and otherwise relies on the checks above.
+Any other branch that passes them is deleted when named, so check the name.
+A task whose worktree has a detached HEAD counts as having no worktree: its branch is deleted and the worktree is left, and since `wt` finds worktrees by branch, check out a branch there before removing it with `wt remove`.
+
+**The deleted branch can be restored.**
+`wt` deletes the branch with `git update-ref -d` given the tip it checked, so if the branch moves in the meantime, Git refuses and the branch is kept.
+It then removes the branch's configuration, such as its upstream, as `git branch -d` would.
+The printed `git branch` command recreates the branch until Git prunes its now-unreachable commits, which the next `git gc` may do for commits more than two weeks old.
+Remote branches are never touched.
+
+If deleting the branch fails after the worktree was removed, `wt` says so, keeps the branch, and prints the `wt remove <task> --delete-branch` command that finishes the job.
 
 ## Development
 

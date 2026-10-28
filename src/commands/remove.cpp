@@ -6,6 +6,7 @@
 #include "git/repo.hpp"
 #include "git/worktree.hpp"
 #include "layout/container.hpp"
+#include "layout/task.hpp"
 #include "ui/format.hpp"
 
 #include <algorithm>
@@ -201,6 +202,204 @@ std::optional<std::string> removal_problem(const Context& ctx,
     return std::nullopt;
 }
 
+// Fails unless `task` names a branch --delete-branch may delete, wherever it
+// is checked out. wt keeps no record of the branches it creates, so nothing
+// proves a branch is a task's; this rules out those that can't be.
+// WARNING: this, with the checks on its worktree or repository, is what
+// keeps --delete-branch from deleting a branch that isn't a task's.
+void check_abandonable(const Context& ctx,
+                       const std::vector<git::Worktree>& worktrees,
+                       const std::string& task) {
+    // Listed rather than looked up: on a case-insensitive filesystem Git
+    // finds "Fix" when only "fix" exists, and deleting "Fix" deletes "fix".
+    const auto branches = git::local_branches(ctx.repo);
+    if (!git::is_valid_branch_name(ctx.repo, task) ||
+        std::ranges::find(branches, task) == branches.end()) {
+        throw Error(ErrorKind::user, "no branch named '" + task + "'");
+    }
+    for (const auto& name : git::integration_candidates(ctx.repo)) {
+        if (layout::same_ignoring_case(name, task)) {
+            throw Error(ErrorKind::refused,
+                        "'" + task +
+                            "' is, or could become, the integration branch, "
+                            "so wt won't delete it");
+        }
+    }
+    if (auto problem = layout::task_name_problem(task)) {
+        throw Error(ErrorKind::refused, "'" + task + "' can't be a wt task (" +
+                                            *problem +
+                                            "), so wt won't delete it");
+    }
+    for (const auto& other : branches) {
+        if (other != task && layout::same_ignoring_case(other, task)) {
+            throw Error(ErrorKind::refused,
+                        "'" + task + "' and '" + other +
+                            "' differ only in case and may share a ref file, "
+                            "so wt won't delete either");
+        }
+    }
+    if (const auto where = git::rebasing_worktree(
+            worktrees, git::common_dir(ctx.repo), task)) {
+        throw Error(ErrorKind::refused,
+                    "'" + task + "' is being rebased in " + where->string() +
+                        "; finish or abort the rebase first");
+    }
+}
+
+// Fails unless wt manages worktrees for this repository: its container must
+// exist and be provably wt's. A branch without a worktree shows no sign of
+// who created it, so that is all wt can confirm before deleting one.
+// WARNING: keeps --delete-branch away from repositories wt doesn't manage.
+void check_wt_repository(const Context& ctx,
+                         const std::vector<git::Worktree>& worktrees,
+                         const std::string& task) {
+    const fs::path common = git::common_dir(ctx.repo);
+    const fs::path container =
+        layout::container_path(worktrees.front().path, common);
+    std::error_code ec;
+    if (fs::symlink_status(container, ec).type() == fs::file_type::not_found) {
+        throw Error(ErrorKind::refused,
+                    "'" + task +
+                        "' has no worktree, and wt has never created one in "
+                        "this repository, so wt can't tell it's a task and "
+                        "won't delete it");
+    }
+    if (auto problem = layout::ownership_problem(container, common)) {
+        throw Error(ErrorKind::refused,
+                    container.string() +
+                        " exists but wt can't confirm it manages it (" +
+                        *problem + "), so wt won't delete '" + task + "'");
+    }
+}
+
+// Removes the configuration Git keeps for the deleted branch `task`, such as
+// its upstream, as `git branch -d` does, so a later branch of that name
+// doesn't inherit it. Returns what went wrong, if anything.
+std::optional<std::string> remove_branch_config(const Context& ctx,
+                                                const std::string& task) {
+    // Task names contain no regex syntax other than '.'. Variable names can't
+    // contain '.', so anchoring the end keeps out the config of a branch
+    // whose name only starts with the task's, e.g. "a.b" for "a".
+    std::string pattern = "^branch\\.";
+    for (const char c : task) {
+        pattern += c == '.' ? std::string("\\.") : std::string(1, c);
+    }
+    pattern += "\\.[^.]+$";
+    const git::Result query =
+        git::run(ctx.repo, {"config", "--local", "--get-regexp", pattern});
+    if (query.exit_code == 1) {
+        return std::nullopt;  // there is none
+    }
+    if (query.exit_code != 0) {
+        return git::error_message(query.err);
+    }
+    const git::Result removed = git::run(
+        ctx.repo, {"config", "--local", "--remove-section", "branch." + task});
+    if (removed.exit_code != 0) {
+        return git::error_message(removed.err);
+    }
+    return std::nullopt;
+}
+
+// Says, on stderr, that the worktree of `task` was removed but its branch
+// wasn't deleted, and how to finish.
+void report_kept_branch(const Context& ctx, const std::string& task) {
+    ctx.err << "wt: the worktree was removed, but branch "
+            << ui::printable(task)
+            << " was kept; once that's dealt with, delete it with `wt remove "
+            << ui::printable(ui::shell_quote(task)) << " --delete-branch`\n";
+}
+
+// Deletes the branch of `task`, which must have no worktree, whether or not
+// it has landed. Throws for a refusal, before deleting anything. Otherwise
+// prints what was deleted and how to restore it and returns 0, or reports the
+// failure to stderr and returns its exit code.
+int abandon_branch(const Context& ctx, const std::string& task) {
+    const std::string ref = "refs/heads/" + task;
+    // WARNING: everything is read again here, after the worktree's removal;
+    // only the branch as it is now, checked out nowhere, may be deleted.
+    const auto worktrees = git::list_worktrees(ctx.repo);
+    check_abandonable(ctx, worktrees, task);
+    for (const auto& worktree : worktrees) {
+        if (worktree.branch &&
+            layout::same_ignoring_case(*worktree.branch, task)) {
+            throw Error(ErrorKind::refused,
+                        "'" + *worktree.branch + "' is checked out in " +
+                            worktree.path.string() + ", so wt won't delete '" +
+                            task + "'");
+        }
+    }
+    const auto tip = git::resolve_commit(ctx.repo, ref);
+    if (!tip) {
+        throw Error(ErrorKind::refused,
+                    "cannot read branch '" + task + "', so wt won't delete it");
+    }
+
+    const std::string shown_task = ui::printable(task);
+    // WARNING: from here on the branch may be gone, so every failure is
+    // reported here, never thrown.
+    std::string problem;
+    try {
+        // WARNING: never `git branch -D`. Given the old value, Git deletes
+        // the branch only if it is still at `tip`, so a commit added since
+        // it was read is never lost unreported; --no-deref deletes this ref,
+        // never one it points to.
+        const git::Result result =
+            git::run(ctx.repo, {"update-ref", "--no-deref", "-d", ref, *tip});
+        if (result.exit_code != 0) {
+            ctx.err << error_prefix(ErrorKind::git)
+                    << "git update-ref failed with exit code "
+                    << result.exit_code << '\n';
+            std::istringstream lines(result.err);
+            for (std::string line; std::getline(lines, line);) {
+                ctx.err << "  " << ui::printable(line) << '\n';
+            }
+            if (git::ref_exists(ctx.repo, ref)) {
+                ctx.err << "wt: branch " << shown_task << " was kept\n";
+                return exit_code(ErrorKind::git);
+            }
+            problem = "git update-ref failed, but branch " + task +
+                      " no longer exists";
+        } else if (git::ref_exists(ctx.repo, ref)) {
+            problem = "git update-ref reported success, but branch " + task +
+                      " still exists";
+        }
+    } catch (const std::exception& e) {
+        problem = std::string("wt could not tell whether branch ") + task +
+                  " was deleted: " + e.what();
+    }
+    // A branch that may be gone gets its restore command either way.
+    const std::string restore =
+        "git branch " + ui::shell_quote(task) + " " + *tip;
+    if (!problem.empty()) {
+        ctx.err << error_prefix(ErrorKind::git) << ui::printable(problem)
+                << "\nwt: the result could not be verified; check it with "
+                   "`git branch --list "
+                << ui::printable(ui::shell_quote(task)) << "`. If it's gone, `"
+                << ui::printable(restore) << "` restores it.\n";
+        return exit_code(ErrorKind::git);
+    }
+
+    ctx.out << "Deleted branch " << shown_task << " (was " << tip->substr(0, 7)
+            << ")\n"
+            << "To restore it: " << ui::printable(restore) << '\n';
+    std::optional<std::string> config_problem;
+    try {
+        config_problem = remove_branch_config(ctx, task);
+    } catch (const std::exception& e) {
+        config_problem = e.what();
+    }
+    if (config_problem) {
+        ctx.err << error_prefix(ErrorKind::git) << "branch " << shown_task
+                << " was deleted, but its configuration wasn't removed: "
+                << ui::printable(*config_problem) << '\n'
+                << "Remove it with `git config --remove-section "
+                << ui::printable(ui::shell_quote("branch." + task)) << "`.\n";
+        return exit_code(ErrorKind::git);
+    }
+    return 0;
+}
+
 }  // namespace
 
 RemovalCheck check_removable(const Context& ctx,
@@ -352,22 +551,68 @@ int remove_worktree(const Context& ctx, const git::Worktree& worktree,
 }
 
 int remove_command(const Context& ctx, const std::string& task,
-                   bool delete_ignored, bool forget_missing) {
+                   bool delete_ignored, bool forget_missing,
+                   bool delete_branch) {
     const auto worktrees = git::list_worktrees(ctx.repo);
-    const git::Worktree& worktree =
-        find_task_worktree(ctx.repo, worktrees, task);
-    const auto check =
-        check_removable(ctx, worktrees, worktree, task, delete_ignored,
-                        forget_missing, "wt remove");
-    if (!check.allowed) {
-        ctx.err << "Nothing was removed.\n";
-        return exit_code(ErrorKind::refused);
+    const git::Worktree* worktree = nullptr;
+    if (delete_branch) {
+        // Checked first, so a branch that may not be deleted keeps its
+        // worktree too.
+        check_abandonable(ctx, worktrees, task);
+        worktree = find_branch_worktree(worktrees, task);
+        if (worktree == nullptr) {
+            if (forget_missing) {
+                throw Error(ErrorKind::user,
+                            "'" + task +
+                                "' has no worktree, so --forget-missing "
+                                "doesn't apply");
+            }
+            check_wt_repository(ctx, worktrees, task);
+        }
+    } else {
+        worktree = &find_task_worktree(ctx.repo, worktrees, task);
     }
-    if (const int code = remove_worktree(ctx, worktree, check); code != 0) {
-        return code;
+
+    if (worktree != nullptr) {
+        const auto check =
+            check_removable(ctx, worktrees, *worktree, task, delete_ignored,
+                            forget_missing, "wt remove");
+        if (!check.allowed) {
+            ctx.err << "Nothing was removed.\n";
+            return exit_code(ErrorKind::refused);
+        }
+        if (const int code = remove_worktree(ctx, *worktree, check);
+            code != 0) {
+            if (delete_branch) {
+                ctx.err << "wt: branch " << ui::printable(task)
+                        << " was kept\n";
+            }
+            return code;
+        }
     }
-    ctx.out << "Kept branch " << ui::printable(task) << '\n';
-    return 0;
+    if (!delete_branch) {
+        ctx.out << "Kept branch " << ui::printable(task) << '\n';
+        return 0;
+    }
+    if (worktree == nullptr) {
+        // Nothing has been removed yet, so a refusal may escape.
+        return abandon_branch(ctx, task);
+    }
+    // WARNING: the worktree is gone now, so every failure is reported here
+    // with that said, never thrown; app.cpp takes an error that escapes to
+    // mean nothing was removed.
+    try {
+        return abandon_branch(ctx, task);
+    } catch (const Error& e) {
+        ctx.err << error_prefix(e.kind()) << ui::printable(e.what()) << '\n';
+        report_kept_branch(ctx, task);
+        return exit_code(e.kind());
+    } catch (const std::exception& e) {
+        ctx.err << error_prefix(ErrorKind::internal) << ui::printable(e.what())
+                << '\n';
+        report_kept_branch(ctx, task);
+        return exit_code(ErrorKind::internal);
+    }
 }
 
 }  // namespace wt

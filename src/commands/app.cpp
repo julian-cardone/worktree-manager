@@ -68,7 +68,7 @@ std::unique_ptr<CLI::App> make_app() {
     auto* remove = app->add_subcommand(
         "remove",
         "Remove a task's worktree if it has no uncommitted changes; the "
-        "branch is kept");
+        "branch is kept unless --delete-branch is given");
     remove->add_option("task", "Task name, i.e. the worktree's branch")
         ->required();
     remove->add_flag("--delete-ignored",
@@ -77,6 +77,10 @@ std::unique_ptr<CLI::App> make_app() {
     remove->add_flag("--forget-missing",
                      "If nothing is at the worktree's path any more, remove "
                      "only Git's record of it");
+    remove->add_flag("--delete-branch",
+                     "Also delete the task's branch, even if it hasn't "
+                     "landed, once its worktree is gone; works for a task "
+                     "whose worktree was already removed");
     auto* merge = app->add_subcommand(
         "merge",
         "Merge a task's branch into the integration branch; on a conflict, "
@@ -125,7 +129,8 @@ int run(int argc, const char* const* argv, const Context& invoked) {
             return remove_command(
                 ctx, sub->get_option("task")->as<std::string>(),
                 sub->get_option("--delete-ignored")->as<bool>(),
-                sub->get_option("--forget-missing")->as<bool>());
+                sub->get_option("--forget-missing")->as<bool>(),
+                sub->get_option("--delete-branch")->as<bool>());
         }
         if (auto* sub = app->get_subcommand("merge"); sub->parsed()) {
             unchanged = "Nothing was merged.";

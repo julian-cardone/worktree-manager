@@ -9,7 +9,6 @@
 #include "ui/format.hpp"
 
 #include <algorithm>
-#include <cctype>
 #include <exception>
 #include <filesystem>
 #include <optional>
@@ -41,13 +40,7 @@ bool path_exists(const fs::path& path) {
     return true;
 }
 
-// Task names are ASCII, so ASCII case folding is enough.
-bool same_ignoring_case(std::string_view a, std::string_view b) {
-    return std::ranges::equal(a, b, [](char x, char y) {
-        return std::tolower(static_cast<unsigned char>(x)) ==
-               std::tolower(static_cast<unsigned char>(y));
-    });
-}
+using layout::same_ignoring_case;
 
 // Whether one name is a directory of the other, e.g. "fix" and "fix/login".
 bool nested(std::string_view a, std::string_view b, bool ignore_case) {

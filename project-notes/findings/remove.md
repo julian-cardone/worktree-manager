@@ -27,6 +27,7 @@ Git offers no lock covering both steps, so this is an accepted residual race: `w
 Refusals are intended to preserve uncertain or valuable state and provide a safe recovery path instead.
 `--delete-ignored` is deliberately narrow: it authorizes only ignored-file deletion and bypasses no other safety check.
 `--forget-missing` is narrow in the same way: it authorizes only forgetting a worktree whose path is empty.
+`--delete-branch` authorizes only deleting the task's branch once its worktree is gone; every check on the worktree still applies.
 A general force mode should not be added speculatively.
 Reconsider it only if repeated real-world use demonstrates a concrete workflow that cannot be supported safely through more specific behavior.
 
@@ -47,3 +48,12 @@ If the worktree's directory is replaced by a symlink to another copy of it, Git 
 
 Git removes the worktree the command runs from, leaving the shell in a deleted directory.
 `wt remove` refuses when the working directory is inside the target worktree.
+
+### Abandoning a task needed raw Git, and Git can't prove whose a branch is
+
+`wt remove` kept branches and `wt merge --cleanup` deleted only landed ones, so abandoning a task meant `git branch -D`, which deletes whatever the branch points to by then and doesn't check what it is.
+`wt remove --delete-branch` now does it: it checks the branch before removing anything, removes the worktree with every usual check, then rereads the state and deletes the branch with `git update-ref -d <ref> <tip>`, so a branch that moved after the check is kept rather than lost unreported, and prints the command that restores it.
+A worktree inside the verified container is the only evidence that `wt` created a branch; without one, Git records nothing and `wt` keeps no database (`AGENTS.md`).
+So without a worktree it refuses unless the repository's container exists and is verifiably its own, and in every case refuses the integration branch and every branch that could become it, names `wt new` wouldn't create, branches checked out or being rebased anywhere, and names that match another branch, or the given spelling's ref file, only ignoring case.
+Any other branch named explicitly is accepted: an accepted limit, since recording ownership would add a second state store that can disagree with Git.
+A task worktree with a detached HEAD isn't found by branch, so its branch is deleted and the worktree kept; nothing is lost, so this is documented rather than refused.

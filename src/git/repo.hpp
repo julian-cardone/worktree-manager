@@ -76,4 +76,10 @@ Divergence divergence(const std::filesystem::path& dir, std::string_view ref,
 // fails.
 std::string integration_branch(const std::filesystem::path& dir);
 
+// Every branch name integration_branch could choose, whether or not it exists
+// or would be chosen now: the configured one, origin's default, main and
+// master. Throws Error if Git fails.
+std::vector<std::string> integration_candidates(
+    const std::filesystem::path& dir);
+
 }  // namespace wt::git

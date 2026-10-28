@@ -26,6 +26,7 @@ add_executable(wt_e2e_tests
   e2e/test_merge_cleanup.cpp
   e2e/test_new.cpp
   e2e/test_remove.cpp
+  e2e/test_remove_branch.cpp
   e2e/test_repository.cpp
   e2e/test_status.cpp)
 target_link_libraries(wt_e2e_tests PRIVATE wt_warnings Catch2::Catch2WithMain)

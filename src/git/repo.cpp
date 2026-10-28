@@ -300,4 +300,26 @@ std::string integration_branch(const fs::path& dir) {
         "<branch>`");
 }
 
+std::vector<std::string> integration_candidates(const fs::path& dir) {
+    std::vector<std::string> names = {"main", "master"};
+    const Result config = run(dir, {"config", "--get", "wt.integrationBranch"});
+    if (config.exit_code == 0) {
+        names.push_back(single_value(config.out));
+    } else if (config.exit_code != kNotFound) {
+        throw Error(error_message(config.err));
+    }
+    const Result origin =
+        run(dir, {"symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"});
+    if (origin.exit_code == 0) {
+        constexpr std::string_view kPrefix = "refs/remotes/origin/";
+        const std::string target = single_value(origin.out);
+        if (target.starts_with(kPrefix)) {
+            names.push_back(target.substr(kPrefix.size()));
+        }
+    } else if (origin.exit_code != kNotFound) {
+        throw Error(error_message(origin.err));
+    }
+    return names;
+}
+
 }  // namespace wt::git
