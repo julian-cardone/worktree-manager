@@ -465,3 +465,34 @@ TEST_CASE("wt remove --delete-branch leaves other branches' configuration") {
               .find("branch.a.remote") == std::string::npos);
     CHECK(branch_exists(box, repo, "a.b"));
 }
+
+TEST_CASE(
+    "wt remove --delete-branch refuses a task worktree with a detached "
+    "HEAD") {
+    Sandbox box;
+    const fs::path repo = make_repo(box, box.work() / "repo");
+    const fs::path path = unmerged_task(box, repo, "claude/fix");
+    const std::string tip = head_of(box, path);
+    git(box, path, {"switch", "-q", "--detach"});
+
+    auto r = run_wt(box, repo, {"remove", "claude/fix", "--delete-branch"});
+    CHECK(r.code == 2);
+    CHECK(r.out.empty());
+    CHECK(r.err == "wt: refused: the worktree for 'claude/fix' at " +
+                       path.string() +
+                       " has a detached HEAD, so wt can't remove it with the "
+                       "branch; check the branch out there again (`git -C " +
+                       path.string() +
+                       " switch claude/fix`), then rerun\nNothing was "
+                       "removed.\n");
+    CHECK(registered(box, repo, path));
+    CHECK(fs::is_regular_file(path / "work.txt"));
+    CHECK(git_output(box, repo, {"rev-parse", "refs/heads/claude/fix"}) == tip);
+
+    // Following the advice removes both.
+    git(box, path, {"switch", "-q", "claude/fix"});
+    r = run_wt(box, repo, {"remove", "claude/fix", "--delete-branch"});
+    CHECK(r.code == 0);
+    CHECK_FALSE(registered(box, repo, path));
+    CHECK_FALSE(branch_exists(box, repo, "claude/fix"));
+}

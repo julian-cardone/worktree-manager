@@ -619,7 +619,7 @@ The branch is deleted only once the worktree is verified gone; if removing it fa
 **Without a worktree,** nothing in Git records that `wt` created a branch, and `wt` keeps no record of its own.
 So `wt` also requires the repository's container to exist and be verifiably this repository's, which shows that `wt` manages tasks here, and otherwise relies on the checks above.
 Any other branch that passes them is deleted when named, so check the name.
-A task whose worktree has a detached HEAD counts as having no worktree: its branch is deleted and the worktree is left, and since `wt` finds worktrees by branch, check out a branch there before removing it with `wt remove`.
+It also refuses while the task's worktree has a detached HEAD, which would hide it from `wt`, which finds worktrees by branch; check the branch out there again and rerun.
 
 **The deleted branch can be restored.**
 `wt` deletes the branch with `git update-ref -d` given the tip it checked, so if the branch moves in the meantime, Git refuses and the branch is kept.

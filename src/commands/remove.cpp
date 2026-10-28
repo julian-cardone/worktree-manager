@@ -244,6 +244,25 @@ void check_abandonable(const Context& ctx,
                     "'" + task + "' is being rebased in " + where->string() +
                         "; finish or abort the rebase first");
     }
+    // WARNING: a detached HEAD hides which branch the task's worktree is
+    // for, and wt finds worktrees by branch, so deleting the branch would
+    // leave a worktree wt can no longer remove.
+    const fs::path folder = layout::container_path(worktrees.front().path,
+                                                   git::common_dir(ctx.repo)) /
+                            layout::task_folder_name(task);
+    for (const auto& worktree : worktrees) {
+        if (!worktree.branch && !worktree.bare &&
+            git::same_path(worktree.path, folder)) {
+            throw Error(
+                ErrorKind::refused,
+                "the worktree for '" + task + "' at " + worktree.path.string() +
+                    " has a detached HEAD, so wt can't remove it with "
+                    "the branch; check the branch out there again "
+                    "(`git -C " +
+                    ui::shell_quote(worktree.path.string()) + " switch " +
+                    ui::shell_quote(task) + "`), then rerun");
+        }
+    }
 }
 
 // Fails unless wt manages worktrees for this repository: its container must

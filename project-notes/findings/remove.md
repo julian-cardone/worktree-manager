@@ -56,4 +56,4 @@ Git removes the worktree the command runs from, leaving the shell in a deleted d
 A worktree inside the verified container is the only evidence that `wt` created a branch; without one, Git records nothing and `wt` keeps no database (`AGENTS.md`).
 So without a worktree it refuses unless the repository's container exists and is verifiably its own, and in every case refuses the integration branch and every branch that could become it, names `wt new` wouldn't create, branches checked out or being rebased anywhere, and names that match another branch, or the given spelling's ref file, only ignoring case.
 Any other branch named explicitly is accepted: an accepted limit, since recording ownership would add a second state store that can disagree with Git.
-A task worktree with a detached HEAD isn't found by branch, so its branch is deleted and the worktree kept; nothing is lost, so this is documented rather than refused.
+A task worktree with a detached HEAD isn't found by branch, so deleting its branch would have left a worktree `wt` can't remove; `--delete-branch` refuses while one is at the task's folder in the container.
