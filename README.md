@@ -42,7 +42,7 @@ The examples use `~/.local`, which needs no administrator rights.
 Each [GitHub Release](https://github.com/julian-cardone/worktree-manager/releases) has a prebuilt binary for macOS on Apple silicon (`macos-arm64`), plus a `SHA256SUMS` file:
 
 ```sh
-version=0.1.0
+version=0.2.0
 platform=macos-arm64
 base=https://github.com/julian-cardone/worktree-manager/releases/download/v$version
 curl -fLO "$base/wt-$version-$platform.tar.gz"
@@ -126,7 +126,7 @@ To keep the integration branch's history linear, set `git config merge.ff only`;
 | Command | Description |
 | --- | --- |
 | `wt`, `wt -h`, `wt --help` | Print help. |
-| `wt -V`, `wt --version` | Print the version (e.g. `wt 0.1.0`) and exit. |
+| `wt -V`, `wt --version` | Print the version (e.g. `wt 0.2.0`) and exit. |
 | `wt list` | List every worktree of the current repository with its branch, status, and path. |
 | `wt list --json` | The same, as JSON for agents and scripts (see [JSON output](#json-output)). |
 | `wt new <task>` | Create branch `<task>` from the integration branch in a new worktree, and print its path. |
@@ -688,6 +688,7 @@ The tests need no Git setup on the runner, since they never read its Git config.
 CMakeLists.txt        # top-level build; produces build/wt
 cmake/                # install-time and uninstall scripts used by the build
 scripts/              # release packaging script
+docs/releases/        # release notes, one file per version tag
 src/
   main.cpp            # entry point; delegates to wt::run
   error.hpp           # wt::Error and its kinds, exit codes, and message prefixes
@@ -705,25 +706,26 @@ tests/
 
 ## Releases
 
-The current version is 0.1.0, the first release.
+The current version is 0.2.0.
 
-Release binaries are published on the [Releases page](https://github.com/julian-cardone/worktree-manager/releases) as an archive named `wt-<version>-<os>-<arch>.tar.gz` (currently only `macos-arm64`, e.g. `wt-0.1.0-macos-arm64.tar.gz`), with a `SHA256SUMS` file.
+Release binaries are published on the [Releases page](https://github.com/julian-cardone/worktree-manager/releases) as an archive named `wt-<version>-<os>-<arch>.tar.gz` (currently only `macos-arm64`, e.g. `wt-0.2.0-macos-arm64.tar.gz`), with a `SHA256SUMS` file.
 See [Installing](#from-a-release-binary) for how to install one.
 
 ### Cutting a release
 
 The version has one source: `project(wt VERSION ...)` in `CMakeLists.txt`, which `wt --version` reports.
 
-To release, land a commit that sets the new version on `main`, then tag that commit and push the tag:
+To release, land a commit on `main` that sets the new version and adds the release's notes as `docs/releases/v<version>.md`, then tag that commit and push the tag:
 
 ```sh
-git tag -a v0.1.0 -m "wt 0.1.0"
-git push origin v0.1.0
+git tag -a v0.2.0 -m "wt 0.2.0"
+git push origin v0.2.0
 ```
 
 Pushing a tag of the form `vX.Y.Z` runs `.github/workflows/release.yml`, which publishes a GitHub Release only if:
 
 - the tagged commit is on `main`;
+- the tagged commit has non-empty release notes in `docs/releases/`, which become the release's description;
 - the Release build passes the full test suite on macOS arm64;
 - the built binary, and the copy in the archive, report exactly the tagged version;
 - no release for the tag exists yet; an existing one is never modified.
@@ -734,7 +736,7 @@ The archive is built on the same macOS 15 (arm64) runner as CI, with a script yo
 scripts/package-release.sh     # configure, build, and test in build-release/, then package
 ```
 
-It prints the archive's path, e.g. `build-release/wt-0.1.0-macos-arm64.tar.gz`.
+It prints the archive's path, e.g. `build-release/wt-0.2.0-macos-arm64.tar.gz`.
 `build-release/` is for packaging only; install from your usual build directory instead, since packaging removes `build-release/install_manifest.txt`.
 
 ## License

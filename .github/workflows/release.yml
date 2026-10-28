@@ -32,6 +32,15 @@ jobs:
             exit 1
           fi
 
+      # Checked here so a missing file stops the release before packaging.
+      - name: Check the release notes exist
+        run: |
+          notes="docs/releases/$GITHUB_REF_NAME.md"
+          if [ ! -s "$notes" ]; then
+            echo "::error::$notes is missing or empty at $GITHUB_REF_NAME; nothing was published."
+            exit 1
+          fi
+
   package:
     name: Package (macos-arm64)
     needs: check-tag
@@ -72,6 +81,11 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Only for the release notes.
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: docs/releases
+
       - uses: actions/download-artifact@v8
         with:
           pattern: package-*
@@ -85,7 +99,8 @@ jobs:
       # gh creates the release as a draft and publishes it only once every
       # asset has uploaded, so a failure leaves a draft, never a public
       # release with missing assets. An existing release (draft or not) for
-      # the tag is never modified.
+      # the tag is never modified. GitHub appends its generated notes (the
+      # "Full Changelog" link) to the release's own notes file.
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -96,4 +111,5 @@ jobs:
             exit 1
           fi
           gh release create "$GITHUB_REF_NAME" dist/* \
-            --verify-tag --generate-notes --title "wt ${GITHUB_REF_NAME#v}"
+            --verify-tag --title "wt ${GITHUB_REF_NAME#v}" \
+            --notes-file "docs/releases/$GITHUB_REF_NAME.md" --generate-notes
